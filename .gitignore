@@ -10,3 +10,5 @@ venv/
 ${HOME}
 .claude/
 .serena/
+.DS_Store
+**/.DS_Store
