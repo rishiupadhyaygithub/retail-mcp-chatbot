@@ -1,130 +1,146 @@
 # Interop Contract v1 — 4-Intern MCP Servers
 
-**Drafted by:** (your name) — Retail intern
-**Date:** 2026-08-07
-**Status:** DRAFT — bring to the other 3 interns, agree together, then everyone commits to it.
+**Status:** DRAFT for joint agreement. Lives in the shared repo, jointly owned. Frozen on agreement; changes by consensus only, additive where possible.
+**Scope of v1:** phase-1 document search, plus resources, prompts, errors, transport, addresses. (Query + action tools are added in **v2** before phase-2 build.)
 
-> This is the shared agreement so all 4 servers speak the same shape and one client can talk to all of them. It is a *starter* — the numbers and names in *(parens)* are proposals to debate as a group, not decisions I made for you. Goal of the meeting: turn every *(paren)* into an agreed value.
+> **[AGREE]** = must be settled by all four interns before freeze. **[TODO]** = a value an intern fills for their own row.
 
 ---
 
 ## 0. Who owns what
 
-| Intern | Name | Industry | Server name / prefix |
-|--------|------|----------|----------------------|
-| 1 | *(you?)* | Retail | `retail` |
-| 2 | *(name)* | *(industry)* | *(prefix)* |
-| 3 | *(name)* | *(industry)* | *(prefix)* |
-| 4 | *(name)* | *(industry)* | *(prefix)* |
+| Intern | Industry | Prefix | Action (v2) |
+|--------|----------|--------|-------------|
+| 1 | Banking | `kb_banking` | raise a transaction dispute |
+| 2 | Hospitality | `kb_hospitality` | log a guest complaint |
+| 3 (Rishi) | Retail / e-commerce | `kb_retail` | open a return / RMA |
+| 4 | Telecommunications | `kb_telecom` | raise a fault ticket |
 
-*(Fill from page 6 of the task PDF. This table is the first thing to nail down — everything else depends on it.)*
-
----
-
-## 1. Transport
-
-- All servers expose **`stdio`** for local dev.
-- All servers ALSO expose **`HTTP`** for interop day, so one client can reach all four over the network.
-- HTTP base URL format: *(propose — e.g. `http://<host>:<port>/mcp`, each intern picks a port)*
-- **Proposed:** every intern runs on a distinct port. Retail = *(8001?)*, Intern 2 = *(8002?)*, etc.
+*(Confirm prefixes read the same for everyone — the client routes on them.)*
 
 ---
 
-## 2. Tool naming convention
+## 1. Transport & network
 
-**Namespace every tool with the industry prefix** so the client can tell servers apart and route correctly.
+- Every server exposes **both** `stdio` **and** streamable **HTTP**, switchable by config. HTTP is what the other three clients use; stdio would force them to subprocess your server with all your deps.
+- Bind to the **machine's network interface, not `localhost`**. Open the port in the local firewall.
+- Record host IP + port here; tell everyone if it changes.
 
-Format: `<prefix>_<verb>_<noun>`
-
-| Server | Example tools |
-|--------|---------------|
-| retail | `retail_search_documents`, `retail_lookup_product`, `retail_get_order`, `retail_cancel_order` |
-| *(intern 2)* | `<prefix>_search_documents`, ... |
-
-**Agreement needed:** everyone uses the same verbs for the same *kind* of operation, so the client's logic is uniform:
-
-- Phase 1 doc search → `<prefix>_search_documents`
-- Phase 2 record lookup → `<prefix>_lookup_<entity>` / `<prefix>_get_<entity>` / `<prefix>_search_<entity>`
-- Phase 3 write → `<prefix>_<action>` (e.g. `_cancel_order`, `_start_return`)
+| Intern | Host IP | Port |
+|--------|---------|------|
+| 1 Banking | [TODO] | [TODO] |
+| 2 Hospitality | [TODO] | [TODO] |
+| 3 Retail | [TODO] | [TODO] |
+| 4 Telecom | [TODO] | [TODO] |
 
 ---
 
-## 3. Shared response shapes
+## 2. Tool naming
 
-Every tool returns JSON. **Success** and **error** have a fixed shape across all servers so the client handles them uniformly.
+Four servers all exposing `search` gives the client four indistinguishable tools. Convention: `kb_<industry>_<verb>[_<noun>]`.
 
-**Success:**
+| Phase | Retail example | Pattern |
+|-------|----------------|---------|
+| 1 search | `kb_retail_search` | `kb_<industry>_search` |
+| 2 query | `kb_retail_query_orders` | `kb_<industry>_query_<entity>` |
+| 3 action | `kb_retail_open_return` | `kb_<industry>_<action>` |
+
+**Descriptions are part of the contract.** The `description` is how the LLM picks both the server *and* the tool type. A vague description means the tool never gets called, or gets called for the wrong thing. Each intern writes descriptions that disambiguate industry + tool type. **[AGREE]** a house style for descriptions (e.g. "Search <Industry> policy/help docs. Use for 'what is the policy' questions, not specific-account lookups.").
+
+---
+
+## 3. Search: input & output (phase 1)
+
+**Input:** `query` (string, required), `top_k` (int, default 5), plus optional `filters`.
+
+**Output — identical across all four servers:**
+
 ```json
-{ "ok": true, "data": { ... } }
+{
+  "results": [
+    {
+      "content": "the passage text",
+      "source": "document title",
+      "section": "heading, if available",
+      "score": 0.82,
+      "chunk_id": "retail-doc-4:chunk-12"
+    }
+  ],
+  "query": "the query as received",
+  "total_found": 5
+}
 ```
 
-**Error:**
+**Empty results:** a success response with an empty `results` array — **not** an error, **not** a 404. The client must be able to pass "I searched and found nothing" to the model verbatim. Same for a query returning zero rows (v2).
+
+---
+
+## 4. Errors — one agreed shape
+
+**[AGREE]** a single error shape used by all four servers for every failure (malformed input, not-found, capability-not-honoured). Proposed:
+
 ```json
-{ "ok": false, "error": { "code": "NOT_FOUND", "message": "human-readable reason" } }
+{ "error": { "code": "INVALID_INPUT", "message": "human-readable reason" } }
 ```
 
-**Agreed error codes** *(propose this set)*:
-
-| code | meaning |
-|------|---------|
-| `NOT_FOUND` | entity doesn't exist |
-| `INVALID_INPUT` | bad/missing argument |
-| `NOT_ALLOWED` | action forbidden (e.g. cancel a delivered order) |
-| `CONFLICT` | state conflict (e.g. already cancelled) |
-
-> Rule everyone agrees to: **a "not found" is a normal error response, never a crash.** No raw exceptions across the wire.
+Proposed codes: `INVALID_INPUT`, `NOT_FOUND`, `NOT_ALLOWED`, `CONFLICT`, `INTERNAL`. A malformed tool argument returns this shape — never a stack trace, never a hang.
 
 ---
 
-## 4. Document search contract (Phase 1)
+## 5. Resources & prompts (phase 1)
 
-`<prefix>_search_documents(query: string, k: int = 3)`
+Each server exposes at least **one resource** (a document list; the data schema is a good second) and at least **one prompt** template. **[AGREE]** whether resource/prompt names also follow the `kb_<industry>_` convention.
 
-Returns:
+---
+
+## 6. Query tools (v2 — placeholder, agreed before phase-2 build)
+
+Common envelope for tabular results, agreed by all four:
+
+- a **columns** list, and **rows** as bare arrays (not repeated per-row keys) — spends field names once, not once per row.
+- a **total count** and a **truncation flag**.
+- an agreed **maximum row count** — an unbounded query tool blows the model's context window.
+
+Parameterised, typed tools (e.g. `kb_retail_query_orders(customer_ref, from_date, to_date, status)`) — **never text-to-SQL**.
+
+Proposed shape (**[AGREE]** in v2):
 ```json
-{ "ok": true, "data": { "results": [
-  { "text": "chunk text", "source": "return_policy.md", "score": 0.83 }
-] } }
+{ "columns": ["ref","amount","status"], "rows": [["...","...","..."]],
+  "total": 128, "truncated": true }
 ```
 
-- `source` is required on every chunk so the client can cite.
-- `score` is optional but recommended.
+---
+
+## 7. Action tool (v2 — placeholder)
+
+Each intern's one write tool. **[AGREE]**: name pattern, required + optional fields, and what it returns (a reference). A client must raise a case against any of the four servers without special-casing. **Missing required field → an error, never a default.**
 
 ---
 
-## 5. The core rule (all servers must honor)
+## 8. The rule all servers honour
 
-> **Servers do retrieval and data only. No server calls an LLM.**
-> All reasoning, planning, tool selection, and text generation happen in the client.
-
-Any server that "understands" or "summarizes" internally violates the contract. If you feel you need an LLM in the server, the tool boundary is wrong — raise it in the group.
+> **No server calls an LLM.** Retrieval and lookup only. All generation happens in the host. A server that "summarises" or "understands" internally violates the contract.
 
 ---
 
-## 6. Phase 3 write safety (all servers)
+## 9. Conformance (interop day)
 
-- Writes are **idempotent** where possible (repeating a cancel returns the same state, not an error).
-- Writes **validate input** and return `NOT_ALLOWED` / `CONFLICT` rather than mutating badly.
-- **Confirmation is owned by the client** (it confirms with the user before calling the write tool). Servers still validate independently — never trust the client blindly.
-- Servers **log every write** (timestamp + args) for the audit trail.
+Every client tests all three other servers against this contract and files one short report per server in the shared repo. Minimum checks: initialization + capability declaration; tool schemas match; empty results = success + empty array; declared resources/prompts work; malformed input → agreed error shape (no stack trace, no hang); server survives client disconnect/reconnect.
 
 ---
 
-## 7. Versioning
+## 10. Versioning
 
-- This is **v1**. After Phase 1 interop day, we write a **design addendum + Contract v2** with what we learned.
-- Breaking changes require group agreement + a version bump. No silent shape changes.
-
----
-
-## 8. Open questions for the meeting
-
-1. Confirm the intern/industry table (§0).
-2. Ports for HTTP (§1).
-3. Do we all agree on the success/error envelope (§3)? Any missing error codes?
-4. How does the client discover which server owns a question — by prefix, by asking each server, or a routing map? *(This is the trickiest cross-server design call.)*
-5. Shared embedding model for Phase 1, or each intern picks their own? (Doesn't have to match, but worth deciding.)
+- **v1** — this document, with the design documents.
+- **v2** — before phase-2 build: adds §6 query tools and §7 action tool.
+- Frozen on agreement. Changes by consensus, additively where possible. Extending a contract without breaking three other clients is part of the exercise.
 
 ---
 
-*Bring this, fill the parens together, everyone commits. That's Contract v1 done.*
+## 11. Open items for the meeting
+
+1. Fill §0 prefixes + §1 IP/port table.
+2. Freeze §4 error shape + codes.
+3. §2 description house style.
+4. How the client discovers which server owns a question (prefix routing vs asking each server) — the trickiest cross-server call.
+5. Shared dates: interop day + all three demos (must be identical across all four plans).
