@@ -140,7 +140,7 @@ Bind to your machine's actual network interface, not `localhost`.
 |---|---|---|---|
 | 1 | Banking | | |
 | 2 | Hospitality | | |
-| 3 | Retail | | |
+| 3 | Retail | 10.10.180.132 | 8003 |
 | 4 | Telecom | | |
 
 Update this table immediately if any address changes, other clients depend on it.

@@ -32,10 +32,10 @@ Internship project: an **MCP server** for the **Retail** domain, plus a **chatbo
 ### 1. Prerequisites
 
 ```bash
-# Python 3.11+ and Ollama (https://ollama.com)
-brew install ollama          # macOS
-ollama serve                 # start the model server (or: brew services start ollama)
-ollama pull qwen2.5:7b-instruct
+# Python 3.11+. Ollama is NOT local — it runs on the shared GB10 server
+# (both chat + embeddings), so every client points at it:
+export OLLAMA_HOST=http://10.10.150.150:11434
+# Models are pulled on GB10, not here: qwen2.5:7b-instruct (chat), bge-m3 (embeddings)
 pip install ollama
 ```
 
@@ -57,8 +57,8 @@ python3 client/toolcall_test.py
 ```bash
 # stdio transport:
 # python3 server/main.py --transport stdio
-# HTTP transport (interop day):
-# python3 server/main.py --transport http --port 8001
+# HTTP transport (interop day) — retail = port 8003, bind to LAN not localhost:
+# python3 server/main.py --transport http --host 0.0.0.0 --port 8003
 ```
 
 ### 5. Start the client  *(to add)*
@@ -75,7 +75,7 @@ python3 client/toolcall_test.py
 
 ## Chat model
 
-`qwen2.5:7b-instruct` via Ollama, local. Verified reliable at tool-calling — transcript in `docs/design_document.md` §7.
+`qwen2.5:7b-instruct` via Ollama on the shared **GB10 server** (`10.10.150.150:11434`). Verified reliable at tool-calling — transcript in `docs/design_document.md` §7.
 
 ## Status
 

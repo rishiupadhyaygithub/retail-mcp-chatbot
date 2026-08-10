@@ -32,7 +32,7 @@ My domain: documents = order tracking, returns, delivery failures, payments, war
 
 ### Components and what runs where
 
-The only shared resource is the LLM. **Ollama runs on the central GB10 server** (both embeddings and chat). Everything else runs on **my own machine**.
+The only shared resource is the LLM. **Ollama runs on the central GB10 server** (`10.10.150.150:11434`, both embeddings and chat). Everything else runs on **my own machine** (`10.10.180.132`), including the retail MCP server (HTTP transport on port **8003**).
 
 ```
         ┌──────────────────────── my machine ────────────────────────┐
@@ -95,7 +95,7 @@ Phase 1 ships `kb_retail_search` (+ resources + a prompt). Phase 2 adds paramete
 
 ## 2. Protocol understanding
 
-**Specification:** Model Context Protocol, spec revision **[TODO: cite exact dated version, e.g. 2025-06-18, from modelcontextprotocol.io before submit]**. I cite the spec, not just SDK docs.
+**Specification:** Model Context Protocol, spec revision **2026-07-28** — team-aligned, all four interns target this version. I cite the spec itself, not just SDK docs. The four points the brief asks for follow.
 
 - **Initialization handshake.** Client and server exchange `initialize` / `initialized`. Each sends `protocolVersion`, `capabilities`, and implementation info. If versions/capabilities don't line up, the session fails here — this is exactly the "initialization failure" I must handle gracefully rather than crash.
 - **Capability negotiation.** Both sides declare what they support. My server **declares**: `tools`, `resources`, `prompts` (and `logging` **[ASSUMPTION]**). My client only uses a capability after the server declares it — and must survive a server that *declares* a capability it then doesn't honour (a required robustness case).
@@ -205,7 +205,7 @@ Context budgets and prompt formatting are deferred to the addendum (once I've me
 
 ## 6. UI
 
-**[ASSUMPTION]** a minimal **Streamlit** app (Python — no separate frontend stack, working chat in ~an hour). It replaces the console, nothing more. One live multi-turn conversation; **no persistence** (reload = fresh); shows **provenance** (which server + which document/record per claim); grows one step per phase (records display at phase 2, confirmation dialog at phase 3). No styling, no component libraries. Weighed on setup cost, as instructed — this must work from the end of phase 1 and is not where time should go. Alternative considered: a bare FastAPI + HTML page (more control, more setup) — rejected on cost.
+A single **plain HTML/JS page** served by the host — no framework, no build step (chosen to match the team and keep setup near-zero; a static page that `fetch`es the host is faster to stand up than any toolkit and gives full control over how provenance renders). It replaces the console, nothing more. One live multi-turn conversation; **no persistence** (reload = fresh); shows **provenance** (which server + which document/record per claim) beneath each answer; grows one step per phase (records display at phase 2, confirmation dialog at phase 3). No styling system, no component libraries. Weighed on setup cost, as instructed — this must work from the end of phase 1 and is not where time should go. Alternative considered: Streamlit (fast, but Python-server-bound and off the team's stack) — rejected for team consistency.
 
 ---
 
@@ -249,11 +249,17 @@ Least-confident estimate: **the client's tool-call loop + four-server interop** 
 
 ## 9. Phase 1 in detail
 
-**9. Ingestion & chunking.** **[ASSUMPTION]** ~500-token chunks, ~50-token overlap, split on document headings first then by size. Metadata per chunk: `source` (doc title), `section` (heading), `chunk_id`. Justification: retail policy docs are short-to-medium and heading-structured; 500 tokens keeps a whole policy clause together, overlap avoids splitting a sentence across the boundary. **Verify:** tune on real recall@5; the brief warns uniform length hides chunking problems, so I mix long and short docs.
+**Corpus (sources).** 15–40 real public documents from **four** retailers chosen for *genuinely conflicting* policies — **Amazon, Best Buy, IKEA, Target** — drawn from their help centres and returns / warranty / delivery / payments / order-tracking pages. Public pages only; every source URL is listed in `data/sources.md`. **[ASSUMPTION: exact doc list pinned at ingestion.]**
+- **Deliberate contradiction pair:** Amazon's ~30-day standard return window vs Best Buy's 15-day window with an electronics restocking fee — the system must surface the conflict, not blend the two into one wrong number.
+- **Vocabulary deliberately differs** across companies: "return" vs "RMA" vs "exchange"; "refund" vs "money back"; "carrier" vs "courier". Retrieval must match on meaning, not string overlap.
+- **Mixed length:** short (a single account-return FAQ, ~60 words) through long (a full terms-of-sale / limited-warranty disclosure, several thousand words across many subsections) — uniform length hides chunking bugs.
+- **Language:** all sources are English (US retailers). None non-English is required; I run one non-English query at baseline to confirm bge-m3 degrades gracefully rather than crashing.
 
-**10. Vector store & data model.** ChromaDB (local, persistent). Schema per record: `{id, content, embedding, source, section, chunk_id}`. Indexing: HNSW (Chroma default). Similarity: cosine. Why Chroma: metadata filtering + persistence + near-zero setup; weighed against FAISS (faster, no metadata filter).
+**9. Ingestion & chunking.** **Split by section (markdown `##` heading), not fixed token count.** Every sourced doc is saved as markdown with `##` marking natural topic boundaries (an individual FAQ, a named warranty clause). Splitting on those boundaries keeps each chunk topically self-contained, which is what makes a citation trustworthy — the `section` field maps 1:1 to a real heading. **Overlap:** none between sections (boundaries are semantic, not arbitrary); for any section over ~400 words (the long disclosure docs), a secondary split with ~50-word overlap so no clause is orphaned. **Metadata per chunk:** `source` (doc title), `section` (heading text), `chunk_id`, `document_type` ∈ {`returns`, `warranty`, `delivery`, `payments`, `order_tracking`}. **Why not fixed-token:** a fixed size would cut the short FAQ needlessly and slice mid-clause through the long disclosures — the brief flags uniform chunking as the weak default. **Verify:** tune on real Recall@5; if heading-split underperforms on the long docs, fall back to heading-then-token hybrid before phase 2 adds token pressure.
 
-**11. Embedding model.** **[ASSUMPTION]** `bge-m3` via Ollama (multilingual, the brief's suggested default). Why: strong retrieval, handles non-English if any source is; if all my corpus is English I'll note I tested one non-English query to confirm behaviour. Alternative: `nomic-embed-text` (lighter). Decide on measured recall.
+**10. Vector store & data model.** ChromaDB (local, persistent on disk). One collection (`retail_docs`); schema per record: `{content, embedding, source, section, chunk_id, document_type}`. **`chunk_id` format `retail-doc-<n>:chunk-<n>`** (e.g. `retail-doc-3:chunk-12`) — the exact contract-v1 format so citations are portable across all four servers. Indexing: HNSW (Chroma default; negligible impact at <100 chunks). Similarity: **cosine, scores normalized 0–1** before return (contract v1 — comparable across all four servers regardless of store). Why Chroma: metadata filtering + persistence + near-zero setup; weighed against FAISS (faster, no built-in metadata filter → more glue).
+
+**11. Embedding model.** `bge-m3` via Ollama on GB10 (the brief's suggested default). Why: strong retrieval quality and multilingual — though my corpus is all English (US retailers), so the multilingual capacity is headroom, not a current requirement. I run one non-English query at baseline to confirm it degrades gracefully. **[ASSUMPTION]** Alternative held in reserve: `nomic-embed-text` (lighter) — switch only if bge-m3 misses the ≤300ms retrieval target or underperforms on measured Recall@5.
 
 **12. Retrieval strategy.** `top_k` default 5 (matches contract). Metadata filtering available (e.g. by `source`). **No-match handling:** below a similarity floor **[ASSUMPTION: threshold tuned on baseline]**, return an empty `results` array — a success, so the host can pass "found nothing" to the model verbatim and refuse.
 
@@ -306,7 +312,7 @@ Two dates are fixed; I plan the rest at half-day granularity, with slack labelle
 
 ## 12. Assumptions register (summary)
 
-Every **[ASSUMPTION]** above, and how I resolve it: stack (build Inspector test day 1), vector store & embedding (measure recall on real corpus), chunk sizes (tune on recall@5), routing method (measure early, host-side fallback ready), UI (Streamlit — revisit only if it costs days), Recall@1 target (argue accept-set if contradictions bite). Every **[AGREE]** is a contract-v1 / shared-schedule item. Every **[TODO]** (spec version, my IP:port, chosen dates) filled before submit.
+Every **[ASSUMPTION]** above, and how I resolve it: stack (build Inspector test day 1), vector store & embedding (measure recall on real corpus), chunk strategy (heading-split; tune / fall to hybrid on Recall@5), routing method (measure early, host-side fallback ready), Recall@1 target (argue accept-set if contradictions bite). Every **[AGREE]** is a contract-v1 / shared-schedule item. Resolved values now baked in: spec `2026-07-28`, GB10 Ollama `10.10.150.150:11434`, my host `10.10.180.132:8003`, UI plain HTML/JS. Only remaining **[TODO]**: the shared dates (interop + three demos), filled once the team fixes them.
 
 ---
 

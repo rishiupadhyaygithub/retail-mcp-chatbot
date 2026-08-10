@@ -10,8 +10,8 @@
 ## A. Corpus plan (phase 1) — source your own, 15–40 docs
 
 - **Majority real public documentation.** Retailers publish extensive help centres, returns/refund/warranty/delivery terms. Public pages only. Sources listed in `data/sources.md`.
-- **3–4 different companies** — different terminology for the same thing + genuinely conflicting policies is the mess the system must handle. **[TODO: list the 3–4 chosen retailers.]**
-- **≥1 deliberately contradicting pair** (e.g. one doc 30-day returns, another 14-day for electronics). Any LLM-generated filler is made **deliberately messy** — inconsistent terms, overlapping coverage — clean docs make retrieval artificially easy and invalidate the eval.
+- **Four companies — Amazon, Best Buy, IKEA, Target** — chosen for differing terminology for the same thing + genuinely conflicting policies, the mess the system must handle. Source URLs in `data/sources.md`.
+- **Deliberately contradicting pair: Amazon ~30-day standard returns vs Best Buy 15-day (electronics + restocking fee).** The system must surface the conflict, not blend them. Any LLM-generated filler is made **deliberately messy** — inconsistent terms, overlapping coverage — clean docs make retrieval artificially easy and invalidate the eval.
 - **Mix long and short docs** — uniform length hides chunking problems.
 
 ## B. Dataset plan (phase 2) — generate it, synthetic
