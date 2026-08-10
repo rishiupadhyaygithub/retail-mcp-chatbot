@@ -73,10 +73,10 @@ Phrased the way an agent asks mid-call. Each records what *should* happen. `expe
 
 | # | Question | Should do | Expected |
 |---|----------|-----------|----------|
-| 22 | "open a return for order [REF], item [ITEM], reason damaged" | open_return, **confirm first** | confirmation showing fields, then RMA ref |
+| 22 | "open a return for order [REF], item [ITEM], reason damaged" | `kb_retail_create_return`, **confirm first** | confirmation showing fields, then RMA ref |
 | 23 | "start a return for this customer" (**missing order/item**) | **client asks for the missing fields**, does not invent | prompts for order_id + line_item_id |
-| 24 | "raise the return we just discussed" (follow-up, multi-turn) | open_return using prior turn's order, confirm | RMA ref |
-| 25 | "open a return on order [REF]" but item already returned | open_return → **NOT_ALLOWED / CONFLICT** | loud fail, no silent default |
+| 24 | "raise the return we just discussed" (follow-up, multi-turn) | `kb_retail_create_return` using prior turn's order, confirm | RMA ref |
+| 25 | "open a return on order [REF]" but item already returned | `kb_retail_create_return` → error (`retryable: false`) | loud fail, no silent default |
 
 ### Unanswerable (3) — retrieval should fail, system should refuse
 

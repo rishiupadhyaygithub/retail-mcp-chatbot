@@ -81,7 +81,7 @@ Example: *"How long does a refund take, and did order 10231's refund actually go
 
 ### Where phase 2 & 3 tools attach
 
-Phase 1 ships `kb_retail_search` (+ resources + a prompt). Phase 2 adds parameterised **query** tools (`kb_retail_query_orders`, etc.) against a SQLite dataset. Phase 3 adds one **write** tool (`kb_retail_open_return`). All three are the *same server*, discovered by the same client with **no client code change** — that is the point of runtime discovery.
+Phase 1 ships `kb_retail_search` (+ resources + a prompt). Phase 2 adds parameterised **query** tools (`kb_retail_query_orders`, etc.) against a SQLite dataset. Phase 3 adds one **write** tool (`kb_retail_create_return`). All three are the *same server*, discovered by the same client with **no client code change** — that is the point of runtime discovery.
 
 ### Language & stack, and why
 
@@ -103,7 +103,7 @@ Phase 1 ships `kb_retail_search` (+ resources + a prompt). Phase 2 adds paramete
 
   | Primitive | Invoked by | Mine |
   |-----------|-----------|------|
-  | Tools | the model, mid-reasoning | `kb_retail_search`, later `kb_retail_query_*`, `kb_retail_open_return` |
+  | Tools | the model, mid-reasoning | `kb_retail_search`, later `kb_retail_query_*`, `kb_retail_create_return` |
   | Resources | the host/user picks | document list; data schema |
   | Prompts | the user, deliberately | one query template |
 
@@ -265,7 +265,7 @@ Least-confident estimate: **the client's tool-call loop + four-server interop** 
 
 **Phase 2 (records).** Data I'll need: ~4–6 SQLite tables — `orders`, `line_items`, `shipments`, `returns`, `customers` — a few hundred to a few thousand rows, **consistent with my documents** (if a doc says refunds take 5 working days, the data shows ~5, with a few exceptions). Include awkward cases: a duplicate charge, a partially shipped order, a return already under review, a customer with two accounts. 3–4 documented reference customers for demos. Tools (parameterised, **not** text-to-SQL): e.g. `kb_retail_query_orders(customer_ref, from_date, to_date, status)`. Results capped + paginated with a truncation flag. What would change my phase-1 design if wrong: the citation format must already carry table+row provenance, so I design §1's citation map to hold record refs now.
 
-**Phase 3 (actions).** One write tool: `kb_retail_open_return(order_id, line_item_id, reason)` → returns a return/RMA reference. Missing required field **fails loudly**, never defaults. Client collects fields, confirms with the user showing exact fields, then executes. What would change phase-1: the host's loop already has the confirm-before-write pause (§5).
+**Phase 3 (actions).** One write tool: `kb_retail_create_return(order_id, line_item_id, reason)` → returns a return/RMA reference. Missing required field **fails loudly**, never defaults. Client collects fields, confirms with the user showing exact fields, then executes. What would change phase-1: the host's loop already has the confirm-before-write pause (§5).
 
 Full schemas, result caps, confirmation flow, context budget, and prompt formatting go in the **design addendum** (before phase-2 build, with contract v2).
 

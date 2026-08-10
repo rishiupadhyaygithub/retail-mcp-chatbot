@@ -1,59 +1,77 @@
-# Interop Contract v1 — 4-Intern MCP Servers
+# Contract v1
 
-**Status:** DRAFT for joint agreement. Lives in the shared repo, jointly owned. Frozen on agreement; changes by consensus only, additive where possible.
-**Scope of v1:** phase-1 document search, plus resources, prompts, errors, transport, addresses. (Query + action tools are added in **v2** before phase-2 build.)
-
-> **[AGREE]** = must be settled by all four interns before freeze. **[TODO]** = a value an intern fills for their own row.
+Shared interface contract, phase 1 (search) only. Covers search, plus resources, prompts, errors, and transport, per the task brief §6. Jointly authored by all four interns. Due alongside the main design document, end of Wednesday 12 August 2026. Frozen once agreed, changes require consensus from all four (see the alignment document for process).
 
 ---
 
-## 0. Who owns what
+## 1. Tool naming convention
 
-| Intern | Industry | Prefix | Action (v2) |
-|--------|----------|--------|-------------|
-| 1 | Banking | `kb_banking` | raise a transaction dispute |
-| 2 | Hospitality | `kb_hospitality` | log a guest complaint |
-| 3 (Rishi) | Retail / e-commerce | `kb_retail` | open a return / RMA |
-| 4 | Telecommunications | `kb_telecom` | raise a fault ticket |
+**Pattern:**
 
-*(Confirm prefixes read the same for everyone — the client routes on them.)*
+```
+kb_<industry>_<verb>[_<noun>]
+```
 
----
+- `kb` = fixed prefix, all tools, all servers.
+- `<industry>` = fixed token per intern:
 
-## 1. Transport & network
+```
+banking
+hospitality
+retail
+telecom
+```
 
-- Every server exposes **both** `stdio` **and** streamable **HTTP**, switchable by config. HTTP is what the other three clients use; stdio would force them to subprocess your server with all your deps.
-- Bind to the **machine's network interface, not `localhost`**. Open the port in the local firewall.
-- Record host IP + port here; tell everyone if it changes.
+- `<verb>` = fixed set: `search`, `query`, `create`. (Only `search` is in scope for v1.)
+- `<noun>` = not used for `search` (search spans the whole document corpus).
 
-| Intern | Host IP | Port |
-|--------|---------|------|
-| 1 Banking | [TODO] | [TODO] |
-| 2 Hospitality | [TODO] | [TODO] |
-| 3 Retail | [TODO] | [TODO] |
-| 4 Telecom | [TODO] | [TODO] |
+**v1 example:**
 
----
-
-## 2. Tool naming
-
-Four servers all exposing `search` gives the client four indistinguishable tools. Convention: `kb_<industry>_<verb>[_<noun>]`.
-
-| Phase | Retail example | Pattern |
-|-------|----------------|---------|
-| 1 search | `kb_retail_search` | `kb_<industry>_search` |
-| 2 query | `kb_retail_query_orders` | `kb_<industry>_query_<entity>` |
-| 3 action | `kb_retail_open_return` | `kb_<industry>_<action>` |
-
-**Descriptions are part of the contract.** The `description` is how the LLM picks both the server *and* the tool type. A vague description means the tool never gets called, or gets called for the wrong thing. Each intern writes descriptions that disambiguate industry + tool type. **[AGREE]** a house style for descriptions (e.g. "Search <Industry> policy/help docs. Use for 'what is the policy' questions, not specific-account lookups.").
+```
+kb_banking_search
+kb_retail_search
+kb_hospitality_search
+kb_telecom_search
+```
 
 ---
 
-## 3. Search: input & output (phase 1)
+## 2. Tool description convention
 
-**Input:** `query` (string, required), `top_k` (int, default 5), plus optional `filters`.
+**Template:**
 
-**Output — identical across all four servers:**
+```
+"<what it does> for <industry>. Use when <trigger condition>. Do not use for <adjacent thing it is NOT for>."
+```
+
+**Example:**
+
+```
+kb_banking_search:
+"Search banking policy and help documentation (disputes, fraud, KYC, account terms, card blocks). 
+Use for questions about rules, policies, or procedures. 
+Do not use for questions about a specific customer's actual transactions or account activity."
+```
+
+Each intern writes their own description content, following this shared structure.
+
+---
+
+## 3. Search tool input schema (identical across all four servers)
+
+```json
+{
+  "query": "string, required",
+  "top_k": "integer, optional, default 5",
+  "filters": {
+    "document_type": "string, optional"
+  }
+}
+```
+
+---
+
+## 4. Search tool output schema (identical across all four servers, field names fixed)
 
 ```json
 {
@@ -63,7 +81,7 @@ Four servers all exposing `search` gives the client four indistinguishable tools
       "source": "document title",
       "section": "heading, if available",
       "score": 0.82,
-      "chunk_id": "retail-doc-4:chunk-12"
+      "chunk_id": "banking-doc-4:chunk-12"
     }
   ],
   "query": "the query as received",
@@ -71,76 +89,93 @@ Four servers all exposing `search` gives the client four indistinguishable tools
 }
 ```
 
-**Empty results:** a success response with an empty `results` array — **not** an error, **not** a 404. The client must be able to pass "I searched and found nothing" to the model verbatim. Same for a query returning zero rows (v2).
+- `chunk_id` format: `<industry>-doc-<n>:chunk-<n>`
+- `score`: float, higher is more relevant, normalized to 0-1 across all four servers
+- `results` is always an array, empty or not
 
 ---
 
-## 4. Errors — one agreed shape
+## 5. Empty result handling
 
-**[AGREE]** a single error shape used by all four servers for every failure (malformed input, not-found, capability-not-honoured). Proposed:
+A search that finds nothing returns a success response with an empty array, never an error, never a 404.
 
 ```json
-{ "error": { "code": "INVALID_INPUT", "message": "human-readable reason" } }
-```
-
-Proposed codes: `INVALID_INPUT`, `NOT_FOUND`, `NOT_ALLOWED`, `CONFLICT`, `INTERNAL`. A malformed tool argument returns this shape — never a stack trace, never a hang.
-
----
-
-## 5. Resources & prompts (phase 1)
-
-Each server exposes at least **one resource** (a document list; the data schema is a good second) and at least **one prompt** template. **[AGREE]** whether resource/prompt names also follow the `kb_<industry>_` convention.
-
----
-
-## 6. Query tools (v2 — placeholder, agreed before phase-2 build)
-
-Common envelope for tabular results, agreed by all four:
-
-- a **columns** list, and **rows** as bare arrays (not repeated per-row keys) — spends field names once, not once per row.
-- a **total count** and a **truncation flag**.
-- an agreed **maximum row count** — an unbounded query tool blows the model's context window.
-
-Parameterised, typed tools (e.g. `kb_retail_query_orders(customer_ref, from_date, to_date, status)`) — **never text-to-SQL**.
-
-Proposed shape (**[AGREE]** in v2):
-```json
-{ "columns": ["ref","amount","status"], "rows": [["...","...","..."]],
-  "total": 128, "truncated": true }
+{
+  "results": [],
+  "query": "refund policy for gift cards",
+  "total_found": 0
+}
 ```
 
 ---
 
-## 7. Action tool (v2 — placeholder)
+## 6. Error shape (identical across all four servers)
 
-Each intern's one write tool. **[AGREE]**: name pattern, required + optional fields, and what it returns (a reference). A client must raise a case against any of the four servers without special-casing. **Missing required field → an error, never a default.**
+```json
+{
+  "error": "invalid_parameter",
+  "message": "top_k must be a positive integer",
+  "retryable": false
+}
+```
 
----
-
-## 8. The rule all servers honour
-
-> **No server calls an LLM.** Retrieval and lookup only. All generation happens in the host. A server that "summarises" or "understands" internally violates the contract.
-
----
-
-## 9. Conformance (interop day)
-
-Every client tests all three other servers against this contract and files one short report per server in the shared repo. Minimum checks: initialization + capability declaration; tool schemas match; empty results = success + empty array; declared resources/prompts work; malformed input → agreed error shape (no stack trace, no hang); server survives client disconnect/reconnect.
+Fixed fields: `error` (machine-readable code), `message` (human-readable), `retryable` (boolean).
 
 ---
 
-## 10. Versioning
+## 7. Transport
 
-- **v1** — this document, with the design documents.
-- **v2** — before phase-2 build: adds §6 query tools and §7 action tool.
-- Frozen on agreement. Changes by consensus, additively where possible. Extending a contract without breaking three other clients is part of the exercise.
+Every server implements both:
+
+```
+MCP_TRANSPORT=stdio     (local dev/testing only)
+MCP_TRANSPORT=http      (required for interop day and all demos)
+```
+
+Bind to your machine's actual network interface, not `localhost`.
+
+### Server addresses (required, keep current)
+
+| Intern | Industry | Host / IP | Port |
+|---|---|---|---|
+| 1 | Banking | | |
+| 2 | Hospitality | | |
+| 3 | Retail | | |
+| 4 | Telecom | | |
+
+Update this table immediately if any address changes, other clients depend on it.
 
 ---
 
-## 11. Open items for the meeting
+## 8. Resources and prompts (minimum requirement)
 
-1. Fill §0 prefixes + §1 IP/port table.
-2. Freeze §4 error shape + codes.
-3. §2 description house style.
-4. How the client discovers which server owns a question (prefix routing vs asking each server) — the trickiest cross-server call.
-5. Shared dates: interop day + all three demos (must be identical across all four plans).
+**One resource, minimum:**
+
+```
+kb_<industry>_documents   -> list of available document titles/IDs
+```
+
+**One prompt, minimum:**
+
+```
+kb_<industry>_<use_case>_template
+```
+
+Naming follows the same `kb_<industry>_<name>` pattern as tools.
+
+---
+
+## 9. Runtime discovery
+
+No client may hardcode another server's tool, resource, or prompt names. All clients discover what a server exposes at connection time and adapt accordingly.
+
+---
+
+## 10. Sign-off
+
+| Intern | Industry | Agreed |
+|---|---|---|
+| 1 | Banking | Yes |
+| 2 | Hospitality | Yes |
+| 3 | Retail | Yes |
+| 4 | Telecom | Yes |
