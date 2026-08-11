@@ -3,7 +3,7 @@
 **Author:** Rishi — Intern 3 (Retail / e-commerce)
 **Version:** 1.0 (draft for approval)
 **Due:** end of Wednesday 12 August 2026 (Design-approved gate)
-**Repo:** `topazfze/chat-mcp-client` → `Rishi/`
+**Repos:** code + docs in my own repo `rishiupadhyaygithub/retail-mcp-chatbot`; the shared team repo holds the **contract only** (per manager: code and docs are per-intern, not namespaced in one shared repo)
 
 > **Legend.** Text marked **[ASSUMPTION]** is a guess I will verify — each says how. Text marked **[AGREE]** must be settled jointly with the other three interns (contract v1). Text marked **[TODO]** is a value I fill once I have it (e.g. my machine's IP). Per the brief: a document that labels its uncertainty is stronger than one that performs confidence.
 
@@ -34,32 +34,55 @@ My domain: documents = order tracking, returns, delivery failures, payments, war
 
 The only shared resource is the LLM. **Ollama runs on the central GB10 server** (`10.10.150.150:11434`, both embeddings and chat). Everything else runs on **my own machine** (`10.10.180.132`), including the retail MCP server (HTTP transport on port **8003**).
 
+```mermaid title="Figure 1 — Phase 1 architecture and data flow (retail)"
+flowchart LR
+  user(["Agent on call"])
+  subgraph host["My machine — 10.10.180.132"]
+    ui["Web UI (HTML / JS)"]
+    loop["Tool-call loop + session mgmt<br/>routing · per-server timeout · citations"]
+    subgraph mcp["Retail MCP server :8003 — NO LLM"]
+      proto["MCP protocol layer<br/>stdio / streamable HTTP"]
+      search["kb_retail_search"]
+      chroma[("Chroma vector store")]
+      docs["15–40 corpus docs"]
+    end
+  end
+  subgraph gb10["Shared GB10 — 10.10.150.150:11434"]
+    ollama["Ollama<br/>chat + embeddings"]
+  end
+  other["3 other interns' servers<br/>Banking · Hospitality · Telecom"]
+  user --> ui --> loop
+  loop -- "tool defs + prompt" --> ollama
+  loop -- "tools/call" --> proto
+  proto --> search --> chroma
+  chroma -- "ingested" --> docs
+  loop -- "streamable HTTP" --> other
 ```
-        ┌──────────────────────── my machine ────────────────────────┐
- user   │                                                             │
- ───────┼─► Web UI ──► Chatbot host / client                          │
-        │              │  - tool-call loop (max 5 rounds)             │
-        │              │  - routing + parallel calls, per-server TO   │
-        │              │  - system prompt, citation map               │
-        │              │        │                                     │
-        │              │        │ MCP (stdio | streamable HTTP)       │
-        │              │   ┌────▼─────────────┐                       │
-        │              │   │ Retail MCP server │  (NO LLM)            │
-        │              │   │  tools/resources/ │                      │
-        │              │   │  prompts          │                      │
-        │              │   │   │        │      │                      │
-        │              │   │ vector    SQLite  │                      │
-        │              │   │ store     (records)                      │
-        │              │   └───┼──────────┼────┘                      │
-        └──────────────────┼──┼──────────┼───────────────────────────┘
-                            │  │          │
-              embeddings ───┘  │          │        HTTP to 3 other
-              + chat           │          │        interns' servers
-                    ┌──────────▼──┐       │      (Banking, Hospitality,
-                    │ GB10: Ollama │◄──────┘        Telecom) — my host
-                    │ (shared)     │                connects to all 4
-                    └──────────────┘
+
+*Figure 1. Solid components exist in phase 1. The server never calls the LLM — retrieval in the server, reasoning in the client.*
+
+```mermaid title="Figure 2 — Where phase 2 (records) and phase 3 (action) attach"
+flowchart LR
+  loop["Client tool-call loop"]
+  subgraph mcp["Retail MCP server — NO LLM"]
+    proto["MCP protocol layer"]
+    search["kb_retail_search<br/>(phase 1)"]
+    query["kb_retail_query_*<br/>(phase 2)"]
+    create["kb_retail_create_return<br/>(phase 3)"]
+    chroma[("Chroma")]
+    sqlite[("SQLite records")]
+    store[("Returns / RMA store")]
+  end
+  gate["Confirmation gate<br/>(phase 3)"]
+  loop --> proto
+  proto --> search --> chroma
+  proto --> query --> sqlite
+  proto --> create --> store
+  loop -. "confirm first" .-> gate
+  gate --> create
 ```
+
+*Figure 2. Phase 2 (query tools + SQLite) and phase 3 (write action + confirmation gate) attach to the same protocol layer and the same client loop — nothing gets rebuilt.*
 
 My host connects to **four** MCP servers (four client sessions): my own + the three others over streamable HTTP.
 
