@@ -11,7 +11,7 @@
 
 - **Majority real public documentation.** Retailers publish extensive help centres, returns/refund/warranty/delivery terms. Public pages only. Sources listed in `data/sources.md`.
 - **Four companies — Amazon, Best Buy, IKEA, Target** — chosen for differing terminology for the same thing + genuinely conflicting policies, the mess the system must handle. Source URLs in `data/sources.md`.
-- **Deliberately contradicting pair: Amazon ~30-day standard returns vs Best Buy 15-day (electronics + restocking fee).** The system must surface the conflict, not blend them. Any LLM-generated filler is made **deliberately messy** — inconsistent terms, overlapping coverage — clean docs make retrieval artificially easy and invalidate the eval.
+- **Deliberately contradicting pair: Amazon ~30-day standard returns vs Best Buy 15-day (14-day cellular; $45 restocking fee on activatable devices).** Bonus spread: IKEA 365-day, Target 90-day. The system must surface the conflict, not blend them. All 21 corpus docs are **real public pages** (no LLM-generated filler); their natural inconsistency in terms and coverage is the mess the system must handle.
 - **Mix long and short docs** — uniform length hides chunking problems.
 
 ## B. Dataset plan (phase 2) — generate it, synthetic
@@ -38,7 +38,7 @@ Phrased the way an agent asks mid-call. Each records what *should* happen. `expe
 | 4 | "what's covered under warranty and for how long?" | search | warranty passage |
 | 5 | "they want to return after 40 days, are we allowed?" | search → **refuse/deny** | return-window passage; answer = no |
 | 6 | "returns window AND who pays return shipping?" | search (**two documents**) | returns-policy + shipping-cost docs |
-| 7 | "is a 'restock fee' the same as a 'return processing charge'?" | search (**vocab conflict across docs**) | the two docs; flag they conflict |
+| 7 | "does every store charge a 'restocking fee' on returns?" | search (**vocab conflict across docs**) | Best Buy $45 activatable-device fee vs IKEA / Target (no such fee) — flag they differ |
 
 ### Record (6) — exact lookups, filtered lists, ≥1 aggregate
 

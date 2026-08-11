@@ -26,4 +26,4 @@ Bring the item with all contents, packaging, and proof of purchase to a store, a
 Once a mailed return is received, it is processed within **7–10 business days**. Depending on the bank's processing time, it may take up to 10 days after processing to reflect on the account.
 
 ## Restocking fees
-Some product categories are subject to a restocking fee (for example, certain activatable devices and special-order products). The fee is deducted from the refund where it applies.
+A **$45 restocking fee** applies to Activatable Devices (cell phones, cellular tablets, mobile hotspots, and cellular wearables), excluding prepaid phones. There is no restocking fee if the product is unopened, or for purchases made in AL, CO, HI, IA, MS, OH, OK, and SC, or where prohibited by law. The fee is deducted from the refund where it applies.

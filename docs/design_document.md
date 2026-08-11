@@ -52,14 +52,15 @@ flowchart LR
   end
   other["3 other interns' servers<br/>Banking · Hospitality · Telecom"]
   user --> ui --> loop
-  loop -- "tool defs + prompt" --> ollama
+  loop -- "chat: tool defs + prompt" --> ollama
   loop -- "tools/call" --> proto
   proto --> search --> chroma
+  search -. "embed query (bge-m3)" .-> ollama
   chroma -- "ingested" --> docs
   loop -- "streamable HTTP" --> other
 ```
 
-*Figure 1. Solid components exist in phase 1. The server never calls the LLM — retrieval in the server, reasoning in the client.*
+*Figure 1. Solid components exist in phase 1. The server calls the embedding model (bge-m3) to vectorize a query — retrieval infrastructure, not generation — but never the chat model. All reasoning stays in the client.*
 
 ```mermaid title="Figure 2 — Where phase 2 (records) and phase 3 (action) attach"
 flowchart LR
@@ -99,7 +100,7 @@ Example: *"How long does a refund take, and did order 10231's refund actually go
 
 ### Server / client boundary (explicit)
 
-- **Server:** takes a query, retrieves/looks up, returns data + metadata. Never generates prose. Never calls an LLM.
+- **Server:** takes a query, retrieves/looks up, returns data + metadata. Never generates prose. It **does** call the embedding model (`bge-m3` on GB10) to turn a query into a vector — retrieval, not reasoning. "No LLM in the server" means no *chat / generation* model, ever; the embedding model is retrieval infrastructure, like the vector index itself.
 - **Client:** all reasoning — routing, tool selection, multi-round loop, grounding, citation, refusal, confirmation for writes.
 
 ### Where phase 2 & 3 tools attach
@@ -272,9 +273,9 @@ Least-confident estimate: **the client's tool-call loop + four-server interop** 
 
 ## 9. Phase 1 in detail
 
-**Corpus (sources).** 15–40 real public documents from **four** retailers chosen for *genuinely conflicting* policies — **Amazon, Best Buy, IKEA, Target** — drawn from their help centres and returns / warranty / delivery / payments / order-tracking pages. Public pages only; every source URL is listed in `data/sources.md`. **[ASSUMPTION: exact doc list pinned at ingestion.]**
-- **Deliberate contradiction pair:** Amazon's ~30-day standard return window vs Best Buy's 15-day window with an electronics restocking fee — the system must surface the conflict, not blend the two into one wrong number.
-- **Vocabulary deliberately differs** across companies: "return" vs "RMA" vs "exchange"; "refund" vs "money back"; "carrier" vs "courier". Retrieval must match on meaning, not string overlap.
+**Corpus (sources).** 15–40 real public documents from **four** retailers chosen for *genuinely conflicting* policies — **Amazon, Best Buy, IKEA, Target** — drawn from their help centres and returns / warranty / delivery / payments / order-tracking pages. Public pages only; every source URL + retrieval date is pinned in `data/sources.md`. **21 documents sourced** (all five document_types × four retailers, plus one long IKEA limited-warranty-terms doc for the length mix).
+- **Deliberate contradiction pair:** Amazon's ~30-day standard return window vs Best Buy's 15-day window (14 days for cellular devices; a $45 restocking fee on activatable devices) — the system must surface the conflict, not blend the two into one wrong number. Bonus spread: IKEA 365-day and Target 90-day — four different windows for one question.
+- **Vocabulary deliberately differs** across companies: "return" (Amazon/Target) vs "return & exchange" (Best Buy) vs "returns & claims" (IKEA); "refund" vs "credit / money back"; "package / parcel" vs "order"; "restocking fee" (Best Buy) vs "No Lemon Policy" (Target) vs no such concept (IKEA). Retrieval must match on meaning, not string overlap.
 - **Mixed length:** short (a single account-return FAQ, ~60 words) through long (a full terms-of-sale / limited-warranty disclosure, several thousand words across many subsections) — uniform length hides chunking bugs.
 - **Language:** all sources are English (US retailers). None non-English is required; I run one non-English query at baseline to confirm bge-m3 degrades gracefully rather than crashing.
 
