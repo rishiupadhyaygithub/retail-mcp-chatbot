@@ -56,17 +56,15 @@ flowchart LR
   subgraph gb10["Shared GB10 — 10.10.150.150:11434"]
     ollama["Ollama<br/>chat model only (Qwen3 8B)"]
   end
-  other["3 other servers<br/>Banking · Hospitality · Telecom"]
   user --> ui --> loop
   loop -- "chat: tools + prompt" --> ollama
   loop -- "tools/call" --> proto
   proto --> search --> chroma
   search -. "embed query (local)" .-> embed
   chroma -- "built from" --> docs
-  loop -- "HTTP" --> other
 ```
 
-*Figure 1. The solid boxes are what exists in phase 1. The server embeds the query with a local model — that's retrieval plumbing, not generation — and never reaches GB10. GB10 only holds the chat model, and only the client calls it.*
+*Figure 1. The solid boxes are what exists in phase 1. The client has two outbound paths, and only two: it calls GB10 for the chat model, and it calls the retail MCP server for `tools/call`. (It also reaches the three other interns' servers the same way it reaches mine — over HTTP; those peers are left off this figure to keep the retail data flow clear.) The server embeds the query with a local model — that's retrieval plumbing, not generation — and never touches GB10. GB10 holds the chat model only, and only the client calls it.*
 
 ```mermaid title="Figure 2 — Where phase 2 and phase 3 tools attach"
 flowchart TD
