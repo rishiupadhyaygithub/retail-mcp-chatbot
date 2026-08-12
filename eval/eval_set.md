@@ -11,7 +11,7 @@
 
 - **Majority real public documentation.** Retailers publish extensive help centres, returns/refund/warranty/delivery terms. Public pages only. Sources listed in `data/sources.md`.
 - **Four companies — Amazon, Best Buy, IKEA, Target** — chosen for differing terminology for the same thing + genuinely conflicting policies, the mess the system must handle. Source URLs in `data/sources.md`.
-- **Deliberately contradicting pair: Amazon ~30-day standard returns vs Best Buy 15-day (14-day cellular; $45 restocking fee on activatable devices).** Bonus spread: IKEA 365-day, Target 90-day. The system must surface the conflict, not blend them. All 21 corpus docs are **real public pages** (no LLM-generated filler); their natural inconsistency in terms and coverage is the mess the system must handle.
+- **Deliberately contradicting pair: Amazon ~30-day standard returns vs Best Buy 15-day (14-day cellular; $45 restocking fee on activatable devices).** Bonus spread: IKEA 365-day, Target 90-day. The system must surface the conflict, not blend them. All 22 corpus docs are **real public pages** (no LLM-generated filler); their natural inconsistency in terms and coverage is the mess the system must handle.
 - **Mix long and short docs** — uniform length hides chunking problems.
 
 ## B. Dataset plan (phase 2) — generate it, synthetic

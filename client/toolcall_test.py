@@ -19,7 +19,7 @@ Run:
 import json
 import ollama
 
-MODEL = "qwen2.5:7b-instruct"  # swap to test others: llama3.1:8b, mistral:latest
+MODEL = "qwen3:8b"  # team chat model on GB10. Proxy-verified on qwen2.5:7b-instruct (design doc §4)
 
 # --- Fake retail "record" tool. Stands in for a real MCP server tool. ---
 INVENTORY = {

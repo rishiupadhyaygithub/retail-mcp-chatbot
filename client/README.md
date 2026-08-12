@@ -1,5 +1,5 @@
 # client/
 
-Chatbot host: LLM tool-call loop, client sessions, UI. Connects to all 4 interns servers.
+Chatbot host: LLM tool-call loop, client sessions, UI. Connects to all 4 interns' servers.
 
-- `toolcall_test.py` — smoke test proving the local model drives the tool-call loop.
+- `toolcall_test.py` — smoke test proving the chat model (`qwen3:8b` on GB10) drives the tool-call loop.

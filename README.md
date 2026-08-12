@@ -2,7 +2,9 @@
 
 Internship project: an **MCP server** for the **Retail** domain, plus a **chatbot client** that connects to all four interns' servers.
 
-> **Core rule:** the server does retrieval + data + actions and **never calls an LLM**. The client does all reasoning, tool selection, and text generation.
+> **Core rule:** the server does retrieval + data + actions and **never calls a chat LLM**. The client does all reasoning, tool selection, and text generation.
+>
+> **Embedding is retrieval, not generation:** the MCP server runs a **local** embedding model on my host (`bge-small-en-v1.5`, off GB10) to turn a query into a vector. The server calls the embedder **directly** — never through the client, and there is **no contact between the chat model and the MCP server** (per manager, 2026-08-11).
 
 ## Repo layout
 
@@ -32,11 +34,13 @@ Internship project: an **MCP server** for the **Retail** domain, plus a **chatbo
 ### 1. Prerequisites
 
 ```bash
-# Python 3.11+. Ollama is NOT local — it runs on the shared GB10 server
-# (both chat + embeddings), so every client points at it:
-export OLLAMA_HOST=http://10.10.150.150:11434
-# Models are pulled on GB10, not here: qwen2.5:7b-instruct (chat), bge-m3 (embeddings)
-pip install ollama
+# Python 3.11+.
+# CHAT model runs on the shared GB10 Ollama server — the CLIENT points at it:
+export OLLAMA_HOST=http://10.10.150.150:11434   # chat ONLY (qwen3:8b), pulled on GB10
+# EMBEDDING runs LOCALLY on my host (10.10.180.132), NOT on GB10:
+#   the MCP server embeds queries itself via sentence-transformers (bge-small-en-v1.5).
+#   Nothing embedding-related touches GB10 (per manager, 2026-08-11).
+pip install ollama sentence-transformers
 ```
 
 ### 2. Verify the tool-call loop (works today)
@@ -73,9 +77,10 @@ python3 client/toolcall_test.py
 # python3 eval/run_evals.py
 ```
 
-## Chat model
+## Models
 
-`qwen2.5:7b-instruct` via Ollama on the shared **GB10 server** (`10.10.150.150:11434`). Verified reliable at tool-calling — transcript in `docs/design_document.md` §7.
+- **Chat: `qwen3:8b`** via Ollama on the shared **GB10 server** (`10.10.150.150:11434`) — called only by the client. Team pick (~6–8 GB). Tool-calling verified on a Qwen-family instruct model as proxy (`qwen2.5:7b-instruct`); re-verified on `qwen3:8b` once pulled on GB10 — transcript in `docs/design_document.md` §4.
+- **Embedding: `bge-small-en-v1.5`** via `sentence-transformers`, **local on my host** (`10.10.180.132`, ~130 MB) — called directly by the MCP server, never on GB10.
 
 ## Status
 
