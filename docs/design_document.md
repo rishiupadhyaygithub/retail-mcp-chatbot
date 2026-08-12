@@ -1,21 +1,24 @@
-# Design Document — Retail/E-commerce Contact Center Knowledge Assistant
+# Design Document — Retail / E-commerce Knowledge Assistant
 
 **Author:** Rishi — Intern 3 (Retail / e-commerce)
 **Version:** 1.0 (draft for approval)
-**Due:** end of Wednesday 12 August 2026 (Design-approved gate)
-**Repos:** code + docs in my own repo `rishiupadhyaygithub/retail-mcp-chatbot`. Per manager: code and docs are per-intern; the shared team repo holds the **contract only** and is otherwise unused (even documents are individual).
+**Due:** end of Wednesday 12 August 2026 (design-approval gate)
+**Repos:** my code and docs live in my own repo, `rishiupadhyaygithub/retail-mcp-chatbot`. The shared team repo holds the contract and nothing else — per the manager, everything else (including docs) is per-intern.
 
-> **Legend.** Text marked **[ASSUMPTION]** is a guess I will verify — each says how. Text marked **[AGREE]** must be settled jointly with the other three interns (contract v1). Text marked **[TODO]** is a value I fill once I have it (e.g. my machine's IP). Per the brief: a document that labels its uncertainty is stronger than one that performs confidence.
+> **How to read the tags.** **[ASSUMPTION]** is something I'm guessing and will check — each one says how. **[AGREE]** is something the four of us have to settle together (contract v1). **[TODO]** is a value I'll drop in once I have it. I'd rather mark what I'm unsure about than pretend I'm sure.
 
 ---
 
-## 0. Context
+## 0. What this is
 
-An agent is on a live call and needs a grounded answer fast. Some answers come from **documents** ("how long does a refund take?"), some from **records** ("was this order shipped?"), some end in an **action** ("open a return"). I build (1) a Retail MCP server exposing document search, structured queries, and one write action, and (2) a chatbot host that connects to **all four** interns' servers, routes each question to the right server and the right tool type, and produces a grounded, cited answer — or refuses.
+An agent is on a live call and needs the right answer fast. Some answers come from **documents** ("how long does a refund take?"), some from **records** ("did this order actually ship?"), and some end in an **action** ("open a return"). So I'm building two things:
 
-**The one rule:** my MCP server never calls an LLM. Retrieval and lookup in the server; all reasoning and generation in the host.
+1. A **Retail MCP server** that can search documents, look up records, and do one write action.
+2. A **chatbot client** that connects to all four interns' servers, works out which server and which kind of tool a question needs, and gives back an answer with its sources — or says it doesn't know.
 
-Industry assignment (from the brief):
+**The one rule I don't break:** my server never calls a chat model. It only retrieves and looks up. All the thinking and writing happens in the client.
+
+Who does what across the team:
 
 | Intern | Industry | Action tool |
 |--------|----------|-------------|
@@ -24,58 +27,60 @@ Industry assignment (from the brief):
 | **3 (me)** | **Retail / e-commerce** | **Open a return / RMA** |
 | 4 | Telecommunications | Raise a fault ticket |
 
-My domain: documents = order tracking, returns, delivery failures, payments, warranties. records = orders, line items, shipments, returns. action = open a return/RMA.
+For my domain: documents cover order tracking, returns, delivery, payments and warranties. Records are orders, line items, shipments and returns. The action is opening a return.
 
 ---
 
 ## 1. Architecture
 
-### Components and what runs where
+### What runs where
 
-The only shared resource is the **chat model**. **Ollama on the central GB10 server** (`10.10.150.150:11434`) hosts the **chat model only** — called by the client, never by my MCP server. **Embedding runs locally on my own machine** (`10.10.180.132`): the retail MCP server (HTTP transport on port **8003**) embeds queries with a local model via a local library, so nothing embedding-related touches GB10 (per manager, 2026-08-11). Everything except the shared chat model runs on my machine.
+The only thing I share with the team is the **chat model**. It runs on the central **GB10 server** (`10.10.150.150:11434`) through Ollama, and only my client talks to it. My server never does.
+
+Everything else runs on my own machine (`10.10.180.132`): the UI, the client, the MCP server, the vector store, and the embedding model. **Embedding is local** — the server turns a query into a vector itself, using a small model on my host. Nothing about embedding touches GB10 (manager, 2026-08-11).
 
 ```mermaid title="Figure 1 — Phase 1 architecture and data flow (retail)"
 flowchart LR
   user(["Agent on call"])
   subgraph host["My machine — 10.10.180.132"]
     ui["Web UI (HTML / JS)"]
-    loop["Tool-call loop + session mgmt<br/>routing · per-server timeout · citations"]
-    subgraph mcp["Retail MCP server :8003 — NO chat LLM"]
-      proto["MCP protocol layer<br/>stdio / streamable HTTP"]
+    loop["Client: tool-call loop<br/>routing · timeouts · citations"]
+    subgraph mcp["Retail MCP server :8003 — no chat model"]
+      proto["MCP protocol layer<br/>stdio / HTTP"]
       search["kb_retail_search"]
-      embed["Local embedder<br/>(sentence-transformers)"]
+      embed["Local embedder<br/>(bge-small-en)"]
       chroma[("Chroma vector store")]
-      docs["22 corpus docs"]
+      docs["22 documents"]
     end
   end
   subgraph gb10["Shared GB10 — 10.10.150.150:11434"]
     ollama["Ollama<br/>chat model only (Qwen3 8B)"]
   end
-  other["3 other interns' servers<br/>Banking · Hospitality · Telecom"]
+  other["3 other servers<br/>Banking · Hospitality · Telecom"]
   user --> ui --> loop
-  loop -- "chat: tool defs + prompt" --> ollama
+  loop -- "chat: tools + prompt" --> ollama
   loop -- "tools/call" --> proto
   proto --> search --> chroma
   search -. "embed query (local)" .-> embed
-  chroma -- "ingested" --> docs
-  loop -- "streamable HTTP" --> other
+  chroma -- "built from" --> docs
+  loop -- "HTTP" --> other
 ```
 
-*Figure 1. Solid components exist in phase 1. The server embeds a query with a **local** embedding model on my host — retrieval infrastructure, not generation — and never touches GB10 or the chat model. GB10 hosts the shared chat model, called only by the client. All reasoning stays in the client.*
+*Figure 1. The solid boxes are what exists in phase 1. The server embeds the query with a local model — that's retrieval plumbing, not generation — and never reaches GB10. GB10 only holds the chat model, and only the client calls it.*
 
-```mermaid title="Figure 2 — Where phase 2 (records) and phase 3 (action) attach"
+```mermaid title="Figure 2 — Where phase 2 and phase 3 tools attach"
 flowchart LR
   loop["Client tool-call loop"]
-  subgraph mcp["Retail MCP server — NO LLM"]
+  subgraph mcp["Retail MCP server — no chat model"]
     proto["MCP protocol layer"]
     search["kb_retail_search<br/>(phase 1)"]
     query["kb_retail_query_*<br/>(phase 2)"]
     create["kb_retail_create_return<br/>(phase 3)"]
     chroma[("Chroma")]
     sqlite[("SQLite records")]
-    store[("Returns / RMA store")]
+    store[("Returns store")]
   end
-  gate["Confirmation gate<br/>(phase 3)"]
+  gate["Confirm with user<br/>(phase 3)"]
   loop --> proto
   proto --> search --> chroma
   proto --> query --> sqlite
@@ -84,79 +89,112 @@ flowchart LR
   gate --> create
 ```
 
-*Figure 2. Phase 2 (query tools + SQLite) and phase 3 (write action + confirmation gate) attach to the same protocol layer and the same client loop — nothing gets rebuilt.*
+*Figure 2. Phase 2 (query tools + SQLite) and phase 3 (the write action + a confirmation step) hang off the same protocol layer and the same client loop. Nothing gets rebuilt when I add them.*
 
-My host connects to **four** MCP servers (four client sessions): my own + the three others over streamable HTTP.
+My client connects to four servers in total — mine plus the three others, over HTTP.
 
-### Data flow for one query, end to end
+### One query, start to finish
 
-Example: *"How long does a refund take, and did order 10231's refund actually go through?"* (a composite question).
+Take a question that needs both a document and a record: *"How long does a refund take, and did order 10231's refund go through?"*
 
-1. UI sends the user turn to the host.
-2. Host builds a prompt: system prompt + conversation so far + the tool catalogue **discovered at runtime** from all four servers.
-3. Model emits tool calls. Routing picks the **retail** server, and both tool *types*: `kb_retail_search` (the policy) and `kb_retail_query_orders` (the record).
-4. Host runs the calls (in parallel, per-server timeout), gets back passages + rows.
-5. Host formats results compactly into the prompt (columnar for rows; strips internal IDs/scores into a citation map).
-6. Model produces a grounded answer citing the document and the row. Host renders it with provenance in the UI.
+1. The UI sends the question to the client.
+2. The client builds a prompt: the system rules, the conversation so far, and the list of tools it found on all four servers at connect time.
+3. The model asks for two tools: `kb_retail_search` for the policy, and `kb_retail_query_orders` for the order.
+4. The client runs both (in parallel, with a timeout per server) and gets back passages and a row.
+5. It formats the results compactly and adds them to the prompt.
+6. The model writes the answer and cites the document and the row. The UI shows it with the sources underneath.
 
-### Server / client boundary (explicit)
+### Server vs client, drawn clearly
 
-- **Server:** takes a query, retrieves/looks up, returns data + metadata. Never generates prose. It **does** run a **local** embedding model on my host to turn a query into a vector — retrieval, not reasoning, and entirely off GB10. "No LLM in the server" means no *chat / generation* model, ever; the local embedder is retrieval infrastructure, like the vector index itself. The chat model (on GB10) is called only by the client — no direct contact between the chat model and the MCP server (confirmed with the manager).
-- **Client:** all reasoning — routing, tool selection, multi-round loop, grounding, citation, refusal, confirmation for writes.
+- **The server** takes a query, finds or looks up data, and returns it with some metadata. It never writes prose. It does run a local embedding model to turn a query into a vector, but that's retrieval, same as the index itself — not a chat model. There is no path from the chat model to my server.
+- **The client** does all the thinking: routing, picking tools, running the loop, grounding the answer, citing sources, refusing when it should, and confirming before any write.
 
-### Where phase 2 & 3 tools attach
+### Where phases 2 and 3 plug in
 
-Phase 1 ships `kb_retail_search` (+ resources + a prompt). Phase 2 adds parameterised **query** tools (`kb_retail_query_orders`, etc.) against a SQLite dataset. Phase 3 adds one **write** tool (`kb_retail_create_return`). All three are the *same server*, discovered by the same client with **no client code change** — that is the point of runtime discovery.
+Phase 1 ships `kb_retail_search` plus a resource and a prompt. Phase 2 adds **query** tools (`kb_retail_query_orders` and friends) over a SQLite dataset. Phase 3 adds one **write** tool, `kb_retail_create_return`. All three sit on the same server and get discovered by the same client with no client code change — that's the whole point of discovering tools at runtime.
 
-### Language & stack, and why
+### Language and stack
 
-- **Language: Python.** **[ASSUMPTION → verify by building the Inspector smoke test day 1]** The official MCP Python SDK is mature, Ollama has a clean Python client, and I already proved the tool-call loop in Python (see §4). Rewriting later would cost more than it saves.
-- **MCP server:** official `mcp` Python SDK, exposing stdio + streamable HTTP from one codebase (transport is separable from protocol).
-- **Vector store:** **[ASSUMPTION]** ChromaDB (local, persistent, metadata filtering, trivial setup). Alternative considered: FAISS (faster, but no built-in metadata filter → more glue). I will confirm after ingesting a real corpus and measuring retrieval latency against the ≤300ms target.
-- **Relational store:** SQLite. At a few thousand rows, simpler is better (brief's guidance).
-- **UI:** minimal — see §6.
+- **Python.** The official MCP Python SDK is solid, Ollama has a clean Python client, and I've already got the tool-call loop working in Python (see §4). Switching later would cost more than it's worth. **[ASSUMPTION — I confirm this by getting the Inspector smoke test passing on day 1.]**
+- **MCP server:** the official `mcp` SDK, serving both stdio and HTTP from one codebase.
+- **Vector store:** ChromaDB — local, saves to disk, filters on metadata, almost no setup. FAISS is faster but has no built-in metadata filter, so it'd need more glue. **[ASSUMPTION — I check this once I've ingested the real corpus and measured retrieval speed against my 300 ms target.]**
+- **Records store:** SQLite. A few thousand rows doesn't need anything heavier.
+- **UI:** minimal, see §6.
 
 ---
 
-## 2. Protocol understanding
+## 2. MCP, and how I use it
 
-**Specification:** Model Context Protocol, spec revision **2026-07-28** — team-aligned, all four interns target this version. I cite the spec itself, not just SDK docs. The four points the brief asks for follow.
+**Spec version: 2026-07-28.** All four of us target this one. I'm working from the spec itself, not just the SDK docs. The four things the brief asks about:
 
-- **Initialization handshake.** Client and server exchange `initialize` / `initialized`. Each sends `protocolVersion`, `capabilities`, and implementation info. If versions/capabilities don't line up, the session fails here — this is exactly the "initialization failure" I must handle gracefully rather than crash.
-- **Capability negotiation.** Both sides declare what they support. My server **declares**: `tools`, `resources`, `prompts` (and `logging` **[ASSUMPTION]**). My client only uses a capability after the server declares it — and must survive a server that *declares* a capability it then doesn't honour (a required robustness case).
-- **The three primitives — who decides to invoke:**
+- **The handshake.** Client and server exchange `initialize` / `initialized`. Each sends its `protocolVersion`, its `capabilities`, and some info about itself. If the versions or capabilities don't match, the session fails right here — which is exactly the "initialization failure" case I have to handle without crashing.
+- **Capabilities.** Both sides say what they support. My server declares `tools`, `resources`, `prompts` (and probably `logging` **[ASSUMPTION]**). My client only uses a capability after the server says it has it — and it has to survive a server that claims a capability and then doesn't deliver, which is one of the required tests.
+- **The three things a server can expose:**
 
-  | Primitive | Invoked by | Mine |
+  | Type | Who decides to use it | Mine |
   |-----------|-----------|------|
-  | Tools | the model, mid-reasoning | `kb_retail_search`, later `kb_retail_query_*`, `kb_retail_create_return` |
-  | Resources | the host/user picks | document list; data schema |
-  | Prompts | the user, deliberately | one query template |
+  | Tools | the model, mid-answer | `kb_retail_search`, later the query and create tools |
+  | Resources | the host or user picks | document list; data schema |
+  | Prompts | the user, on purpose | one query template |
 
-  Building only tools would leave me thinking MCP is "REST with a JSON schema attached." Resources + prompts are a couple of hours each and make the distinction concrete.
-- **Runtime discovery.** Client calls `tools/list` (and `resources/list`, `prompts/list`) at session start — nothing hardcoded. A tool renamed or added in v2 is picked up with no client change.
-- **MCP Inspector** validates my server before I write any client code. If it fails in Inspector it fails everywhere.
+  If I only built tools, I'd walk away thinking MCP is just REST with a schema bolted on. Resources and prompts are a couple of hours each and make the difference real.
+- **Discovery at runtime.** The client calls `tools/list` (and the resource and prompt versions) when it connects. Nothing is hardcoded. If a tool gets renamed in someone's v2, my client picks it up with no change.
 
----
-
-## 3. Tool-type routing (the hard problem)
-
-By phase 2 the model sees, across four servers, **two tool types each** (search vs query) plus one action — and must pick the right server *and* the right tool type. "How long does a refund take?" plausibly matches all four servers. This is the most common failure the eval set is built to catch.
-
-**My approach (considered, not final):**
-
-1. **Descriptions do the routing.** The tool `description` is how the model picks both server and tool type, so I write them to disambiguate: `kb_retail_search` → *"Search Retail/e-commerce policy & help documents (returns, delivery, payments, warranties). Use for 'what is the policy' questions."* vs `kb_retail_query_orders` → *"Look up specific Retail orders, shipments and returns by id/customer. Use for 'what happened on this order' questions, never for policy."* Vague descriptions are the main cause of mis-routing.
-2. **System prompt encodes the rule.** "Policy/how-does-it-work → search. Specific account/order/number → query. Change state → action, and only after confirming with the user." (Full text in §5.)
-3. **Server selection by domain match.** Route on which industry the question is about; a comparative question ("do bank and telco refunds differ?") fans out to two servers.
-4. **Composite handling.** Questions needing both a document and a record trigger two tool types in one turn (multi-round loop, §5).
-5. **Measured, not asserted.** Routing accuracy (server ≥90%, tool-type ≥90%, spurious ≤1/query) is in the scorecard (§7). **[ASSUMPTION]** description-driven routing hits target on an 8B model; if not, my fallback is a lightweight pre-classification step in the host (still no chat LLM in the *server*).
+Before I write any client code, I run my server through the **MCP Inspector**. If it fails there, it fails everywhere.
 
 ---
 
-## 4. Chat model — with evidence
+## 3. Choosing the right tool (the hard part)
 
-**Model: `qwen3:8b`** (team-proposed, shared on GB10 — ~6–8 GB; the local embedder adds ~0.1–1.2 GB on my own host, not GB10). The chat model lives on GB10 and is called only by the client. Ollama's tool-calling varies sharply by model and some advertise it while doing it badly — discovering that in week 3 is fatal — so I verified a full round-trip on a Qwen-family instruct model now. Weaker models tested (mistral, gemma) were unreliable. **[AGREE]** all four interns share one GB10 chat model; Qwen3 8B is the current team pick.
+By phase 2 the model sees, across four servers, two kinds of tool each plus an action. It has to pick the right server *and* the right kind of tool. "How long does a refund take?" reasonably matches all four servers, so this is the mistake my eval set is built to catch.
 
-Verified tool-call round-trip (retail record lookup):
+Here's the decision the model has to make on every question:
+
+```mermaid
+flowchart TD
+  q["Agent question"]
+  q --> policy{"About a rule<br/>or policy?"}
+  policy -- yes --> search["search tool<br/>kb_retail_search"]
+  policy -- no --> spec{"About one specific<br/>order / account / number?"}
+  spec -- yes --> query["query tool<br/>kb_retail_query_*"]
+  spec -- no --> chg{"Wants to change<br/>something?"}
+  chg -- yes --> action["action tool<br/>(confirm first)"]
+  chg -- no --> none["Nothing fits →<br/>refuse or ask"]
+```
+
+How I try to get the model to follow that tree:
+
+1. **The tool descriptions do most of the work.** The model reads them to pick the server and the tool type, so I write them to be hard to confuse. `kb_retail_search` says *"Search retail policy and help documents — returns, delivery, payments, warranties. Use for 'what's the policy' questions. Not for a specific order."* `kb_retail_query_orders` says *"Look up specific retail orders and shipments by id or customer. Use for 'what happened on this order'. Never for policy."* Vague descriptions are the number-one cause of the model picking wrong, so I spend time here.
+2. **The system prompt states the rule.** Policy → search. A specific order or number → query. Change something → action, and only after checking with the user. Full text in §5.
+3. **Server by domain.** Route on which industry the question is about. A comparison ("do bank and telco refunds differ?") goes to two servers.
+4. **Two things at once.** A question needing a document and a record fires both tool types in one turn (the loop in §5 handles this).
+5. **I measure it, I don't assume it.** Routing accuracy is in the scorecard (§7): right server ≥90%, right tool type ≥90%, at most one wasted call per query. **[ASSUMPTION — that description-driven routing hits target on an 8B model. If it doesn't, my backup is a small pre-classifier in the client. Even then, no chat model goes into the server.]**
+
+---
+
+## 4. The chat model, with proof
+
+**Model: Qwen3 8B**, running on GB10 (about 6–8 GB; my local embedder adds roughly 1 GB, on my own machine). Only the client talks to it. Ollama's tool-calling quality varies a lot between models — some claim to support it and then do it badly — and finding that out in week 3 would sink the project. So I ran a full round-trip now to check.
+
+This is the round-trip, drawn out:
+
+```mermaid
+sequenceDiagram
+  participant U as Agent
+  participant C as Client
+  participant M as Chat model
+  participant T as Tool
+  U->>C: "how many in stock, and the price?"
+  C->>M: question + the tool's schema
+  M->>C: call lookup_product(SKU12345)
+  C->>T: run it locally
+  T->>C: {price: 79.99, stock: 42}
+  C->>M: here's the result
+  M->>C: answer in plain words
+  C->>U: "42 in stock at $79.99"
+```
+
+And the actual run:
 
 ```
 MODEL: qwen2.5:7b-instruct
@@ -167,33 +205,49 @@ FINAL ANSWER: There are 42 units of Wireless Headphones (SKU12345) in stock, at 
 PASS: full tool-call loop worked.
 ```
 
-Script: `client/toolcall_test.py` (verified on a `qwen2.5:7b-instruct` instance; I re-verify on `qwen3:8b` once it is pulled on GB10). **[ASSUMPTION]** the same reliability holds once four servers' tools are in the catalogue at once; I re-test after phase-1 integration. **[AGREE]** the four of us confirm GB10 has the agreed chat model (Qwen3 8B) pulled and that it handles tool-calling — an escalation item if not.
+The script is `client/toolcall_test.py`. I ran it on a `qwen2.5:7b-instruct` instance as a stand-in and will re-run it on `qwen3:8b` once that's pulled on GB10. **[ASSUMPTION — that it stays reliable once all four servers' tools are in the list at once. I re-test after phase-1 integration.]** **[AGREE — the four of us confirm GB10 has Qwen3 8B pulled and that it handles tool-calling. If it doesn't, that's an escalation.]**
 
 ---
 
-## 5. Client design (sketch)
+## 5. Client design
 
 ### The tool-call loop
 
+```mermaid
+flowchart TD
+  s["User turn comes in"]
+  s --> b["Build prompt:<br/>system rules + history + all tools"]
+  b --> ask["Send to the chat model"]
+  ask --> d{"Did it ask<br/>for a tool?"}
+  d -- no --> ans["Return the grounded answer"]
+  d -- yes --> w{"Is it a write<br/>(action) tool?"}
+  w -- yes --> conf["Pause. Show the fields.<br/>Wait for the user to confirm"]
+  conf --> run
+  w -- no --> run["Run the tools in parallel<br/>(timeout per server)"]
+  run --> feed["Add the results to the prompt"]
+  feed --> ask
 ```
-receive user turn
-build prompt = system_prompt + history + runtime tool catalogue (all 4 servers)
-loop (max 5 iterations):            # cap so a confused model can't loop forever
-    response = model.chat(prompt, tools)
-    if response has tool_calls:
-        run calls in PARALLEL, each with a per-server timeout
-        for a write tool: PAUSE — confirm with user, show exact fields, then execute
-        append results (compact form) to prompt
-        continue
-    else:
-        return response.content       # final grounded answer
-```
+
+The loop caps at five rounds so a confused model can't spin forever. A write tool never runs on its own — the loop stops, shows the exact fields, and waits for a yes.
 
 ### When a server is slow or down
 
-Per-server timeout; on timeout or connection error the host **degrades gracefully** — it returns a partial answer plus a clear note ("Telecom server unreachable; answering from the other three"), never hangs, never crashes. Covers the required cases: one server down, all down, a server restarting mid-session, malformed tool arguments, a server declaring a capability it doesn't honour.
+Each server call has a timeout. If it times out or the connection drops, the client keeps going and answers from what it has, with a note ("Telecom server didn't respond; answering from the other three"). It never hangs and never crashes. That covers the required cases: one server down, all down, a server restarting mid-session, bad tool arguments, and a server that claims a capability it doesn't honour.
 
-### First draft of the system prompt (actual text — will improve)
+### First draft of the system prompt
+
+This is what actually enforces grounding, citations and refusals, so it's worth getting an early draft down even if it changes. It has five parts:
+
+```mermaid
+flowchart LR
+  sp["System prompt"] --> g["Grounding:<br/>only tool results"]
+  sp --> ts["Tool choice:<br/>search / query / action"]
+  sp --> ci["Citations:<br/>name the source"]
+  sp --> rf["Refusal:<br/>'don't know' is fine"]
+  sp --> wr["Writes:<br/>confirm first"]
+```
+
+The text:
 
 ```
 You are a contact-center knowledge assistant. An agent is on a live call.
@@ -224,121 +278,135 @@ WRITES
   the user to confirm before executing.
 ```
 
-Context budgets and prompt formatting are deferred to the addendum (once I've measured real chunks), per the brief.
+Token budgets and exact formatting come later, in the addendum, once I've seen what real chunks look like.
 
 ---
 
 ## 6. UI
 
-A single **plain HTML/JS page** served by the host — no framework, no build step (chosen to match the team and keep setup near-zero; a static page that `fetch`es the host is faster to stand up than any toolkit and gives full control over how provenance renders). It replaces the console, nothing more. One live multi-turn conversation; **no persistence** (reload = fresh); shows **provenance** (which server + which document/record per claim) beneath each answer; grows one step per phase (records display at phase 2, confirmation dialog at phase 3). No styling system, no component libraries. Weighed on setup cost, as instructed — this must work from the end of phase 1 and is not where time should go. Alternative considered: Streamlit (fast, but Python-server-bound and off the team's stack) — rejected for team consistency.
+One plain HTML/JS page, served by the client. No framework, no build step. I picked it to match the team and because a static page that fetches the client stands up faster than any toolkit and gives me full control over how sources are shown. It's a replacement for the console, nothing more: one live conversation, no history (reload and it's fresh), and the sources shown under each answer. It grows one step per phase — records show up in phase 2, the confirmation dialog in phase 3. I weighed this on setup cost, as the brief says to; it has to work from the end of phase 1 and isn't where I should spend time. I looked at Streamlit but it ties me to a Python server and isn't on the team's stack, so I dropped it.
 
 ---
 
-## 7. Evaluation plan
+## 7. How I'll measure it
 
-**Eval set + harness exist before the chatbot does** (baseline gate). 25–30 hand-written questions, phrased the way an agent asks mid-call, each recording what *should* happen (which docs / which query / which action). Categories: document (incl. two-document answers and vocabulary differing from source), record (incl. an aggregate), composite, cross-server (≥2 needing another industry + one comparative across two), action (incl. one missing-field → client must ask), unanswerable. Lives in `eval/`.
+The **eval set and the harness exist before the chatbot does** — that's the baseline gate. 28 questions, written the way an agent actually asks mid-call, each with what should happen (which document, which query, which action). They live in `eval/`. Categories: document (including two-document answers and questions worded differently from the source), record (including an aggregate), composite, cross-server, action (including one with a missing field, where the client must ask), and unanswerable.
 
-**Scorecard reported twice** — a baseline as soon as retrieval works, and a final set after tuning. Each layer measured separately (a wrong final answer could be retrieval, routing, query, or the model ignoring good data):
+I report the **scorecard twice** — a baseline as soon as retrieval works, and a final one after tuning. Each layer is scored on its own, because a wrong final answer could come from retrieval, routing, the query, or the model ignoring good data:
 
-| Layer | Metrics & targets |
-|-------|-------------------|
+| Layer | Targets |
+|-------|---------|
 | Retrieval | Recall@5 ≥85%, Recall@1 ≥60% |
-| Routing | server ≥90%, tool-type ≥90%, spurious ≤1/query, cross-server synth ≥80%, composite ≥80% |
-| Structured | query correctness ≥90%, numerical accuracy 100%, empty-result honesty 100% |
-| Answer quality | groundedness 100%, citation accuracy 100%, correct refusal 100%, false refusal ≤10% |
-| Action safety | spurious writes 0, fabricated fields 0, action routing 100%, confirmation shown 100% |
-| Latency | e2e p50 ≤4s, p95 ≤10s, retrieval ≤300ms, query ≤100ms, MCP overhead ≤100ms (warm vs cold reported separately — Ollama unloads idle models) |
-| Token | tokens/query reported then reduced ≥40% vs naive raw-JSON injection, no quality regression |
-| Robustness | pass/fail: 1 server down, all down, empty query, 5000-word query, wrong-language query, off-topic, 10000-row match, missing customer ref, two concurrent identical requests — none may crash |
+| Routing | right server ≥90%, right tool type ≥90%, ≤1 wasted call/query, cross-server ≥80%, composite ≥80% |
+| Records | query correct ≥90%, numbers 100%, honest empty results 100% |
+| Answer quality | grounded 100%, citations 100%, correct refusals 100%, false refusals ≤10% |
+| Action safety | 0 unwanted writes, 0 made-up fields, action routing 100%, confirmation shown 100% |
+| Latency | end-to-end p50 ≤4s, p95 ≤10s, retrieval ≤300ms, query ≤100ms (warm and cold reported separately — Ollama unloads idle models) |
+| Tokens | measured, then cut ≥40% vs dumping raw JSON, with no quality drop |
+| Robustness | pass/fail, none may crash: one server down, all down, empty query, huge query, wrong-language query, off-topic, 10,000-row match, missing customer ref, two identical requests at once |
 
-**Harness:** one script (`eval/run_evals.py`), one command, prints the scorecard as one table; reads the eval set, runs each question in a **fresh session**, records per-layer numbers, instruments token counts from the baseline run onward.
+The harness is one script, `eval/run_evals.py`, run with one command. It reads the eval set, runs each question in a **fresh session** (otherwise a question passes only because an earlier turn happened to fetch the right passage, and the numbers stop meaning anything), scores each layer, and counts tokens from the baseline run on.
 
-**Targets I may argue against [ASSUMPTION]:** Recall@1 ≥60% may be tight if my corpus has genuinely conflicting policies (the brief *wants* contradictions) — a passage can be "correct" two ways. If baseline shows this, I'll propose Recall@1 measured against an accept-set of valid passages, with reasoning, rather than silently missing target.
+**A target I might push back on [ASSUMPTION]:** Recall@1 ≥60% could be tight if my corpus has genuinely conflicting policies — and the brief wants those. A passage can be "the right one" in more than one way. If the baseline shows this, I'll propose measuring Recall@1 against a set of acceptable passages, and explain why, rather than quietly missing the target.
 
 ---
 
-## 8. Risks
+## 8. What could go wrong
 
-| Risk | Likelihood | Plan |
+| Risk | Chance | Plan |
 |------|-----------|------|
-| Tool-type routing below target (hardest problem) | High | Description-driven first; fallback host-side pre-classifier; measured early |
-| GB10 / Ollama unreachable or model can't tool-call | Med | Escalate immediately (brief §13); verified round-trip already done |
-| Four-way contract disagreement | Med | Bring a concrete draft (contract v1) to shorten debate; escalate if no convergence |
-| Retrieval quality on messy/contradictory corpus | Med | It's a bottomless pit — cap tuning time; report honestly |
-| My machine off during interop/demo → 3 others blocked | Low/High-impact | Keep awake + on network for all shared dates; verify reachability before interop |
-| Cold-start latency mistaken for bugs | Med | Report warm vs cold separately; chat model on shared GB10 unloads when idle — embedding is local, so no ingestion contention |
+| Tool choice below target (the hard one) | High | Descriptions first, client-side classifier as backup, measured early |
+| GB10 or Ollama down, or the model can't tool-call | Medium | Escalate straight away; round-trip already verified |
+| The four of us can't agree the contract | Medium | Bring a concrete draft to cut the debate short; escalate if we don't converge |
+| Retrieval quality on a messy corpus | Medium | It's a bottomless pit — I cap the tuning time and report honestly |
+| My machine off during interop → three others blocked | Low chance, high impact | Keep it awake and on the network for shared dates; check reachability before interop |
+| Cold-start latency looks like a bug | Medium | Report warm and cold separately; the chat model unloads when idle, and embedding is local so there's no contention |
 
-Least-confident estimate: **the client's tool-call loop + four-server interop** (§9). If it slips, phase 1 demo slips.
+The estimate I trust least is the client loop plus four-server interop (§9). If that slips, the phase-1 demo slips.
 
 ---
 
 ## 9. Phase 1 in detail
 
-**Corpus (sources).** 15–40 real public documents from **four** retailers chosen for *genuinely conflicting* policies — **Amazon, Best Buy, IKEA, Target** — drawn from their help centres and returns / warranty / delivery / payments / order-tracking pages. Public pages only; every source URL + retrieval date is pinned in `data/sources.md`. **22 documents sourced** — the five `document_type`s × four retailers (20), plus one long IKEA limited-warranty-terms doc for the length mix and an Amazon double-charge doc for the composite eval (Q14). Amazon carries an extra payments split (`refund_timelines` + `charged_twice`) in place of a single `payments` page.
-- **Deliberate contradiction pair:** Amazon's ~30-day standard return window vs Best Buy's 15-day window (14 days for cellular devices; a $45 restocking fee on activatable devices) — the system must surface the conflict, not blend the two into one wrong number. Bonus spread: IKEA 365-day and Target 90-day — four different windows for one question.
-- **Vocabulary deliberately differs** across companies: "return" (Amazon/Target) vs "return & exchange" (Best Buy) vs "returns & claims" (IKEA); "refund" vs "credit / money back"; "package / parcel" vs "order"; "restocking fee" (Best Buy) vs "No Lemon Policy" (Target) vs no such concept (IKEA). Retrieval must match on meaning, not string overlap.
-- **Mixed length:** short (a single account-return FAQ, ~60 words) through long (a full terms-of-sale / limited-warranty disclosure, several thousand words across many subsections) — uniform length hides chunking bugs.
-- **Language:** all sources are English (US retailers). None non-English is required; I run one non-English query at baseline to confirm the embedder degrades gracefully rather than crashing.
+**The corpus.** 22 real, public documents from four retailers — **Amazon, Best Buy, IKEA, Target** — pulled from their help centres (returns, warranty, delivery, payments, order tracking). I picked these four because their policies genuinely disagree, which is the mess the system has to handle. Every source URL and the date I pulled it are pinned in `data/sources.md`. Public pages only.
 
-**9. Ingestion & chunking.** **Split by section (markdown `##` heading), not fixed token count.** Every sourced doc is saved as markdown with `##` marking natural topic boundaries (an individual FAQ, a named warranty clause). Splitting on those boundaries keeps each chunk topically self-contained, which is what makes a citation trustworthy — the `section` field maps 1:1 to a real heading. **Overlap:** none between sections (boundaries are semantic, not arbitrary); for any section over ~400 words (the long disclosure docs), a secondary split with ~50-word overlap so no clause is orphaned. **Metadata per chunk:** `source` (doc title), `section` (heading text), `chunk_id`, `document_type` ∈ {`returns`, `warranty`, `delivery`, `payments`, `order_tracking`}. **Why not fixed-token:** a fixed size would cut the short FAQ needlessly and slice mid-clause through the long disclosures — the brief flags uniform chunking as the weak default. **Verify:** tune on real Recall@5; if heading-split underperforms on the long docs, fall back to heading-then-token hybrid before phase 2 adds token pressure.
+- **A deliberate contradiction:** Amazon's ~30-day return window vs Best Buy's 15 days (14 for cellular, plus a $45 restocking fee on activatable devices). And for spread, IKEA's 365 days and Target's 90 — four different answers to "how long do I have to return this?". The system has to give the right company's number, not average them.
+- **The wording differs on purpose:** "return" vs "return & exchange" vs "returns & claims"; "refund" vs "money back" vs "credit"; "parcel" vs "order". Retrieval has to match on meaning, not on matching words.
+- **Mixed lengths:** from a ~60-word FAQ to a multi-section warranty-terms document. Uniform length hides chunking bugs.
+- **Language:** all English (US retailers). I run one non-English query at baseline just to confirm the embedder degrades gracefully instead of crashing.
 
-**10. Vector store & data model.** ChromaDB (local, persistent on disk). One collection (`retail_docs`); schema per record: `{content, embedding, source, section, chunk_id, document_type}`. **`chunk_id` format `retail-doc-<n>:chunk-<n>`** (e.g. `retail-doc-3:chunk-12`) — the exact contract-v1 format so citations are portable across all four servers. Indexing: HNSW (Chroma default; negligible impact at <100 chunks). Similarity: **cosine, scores normalized 0–1** before return (contract v1 — comparable across all four servers regardless of store). Why Chroma: metadata filtering + persistence + near-zero setup; weighed against FAISS (faster, no built-in metadata filter → more glue).
+Here's the phase-1 pipeline in one picture:
 
-**11. Embedding model (local, on my host — not GB10).** Per the manager (2026-08-11), all embedding runs on my own machine, off GB10, with any library/small model of my choice. **Pick: `BAAI/bge-small-en-v1.5`** via `sentence-transformers` (local, ~130 MB, strong English retrieval, CPU-friendly, ≤300 ms target realistic). Reserve alternatives (all local): `all-MiniLM-L6-v2` (~90 MB, lighter/faster) or `bge-base-en-v1.5` (heavier, higher recall). Because each intern embeds locally with a possibly different model, the contract normalizes `score` to 0–1 so results stay comparable across servers. **[ASSUMPTION]** confirm the pick on measured Recall@5 at baseline and switch within this local set if it misses target. Corpus is all English, so bge-m3's multilingual headroom isn't needed.
+```mermaid
+flowchart LR
+  subgraph build["Built once"]
+    d["22 documents"] --> ch["Split on ## headings"] --> em1["Embed each chunk<br/>(local bge-small)"] --> db[("ChromaDB")]
+  end
+  subgraph run["Every query"]
+    q["Agent question"] --> em2["Embed the question<br/>(local)"] --> sim["Cosine similarity<br/>vs stored chunks"] --> top["Top 5 chunks"] --> llm["Chat model writes<br/>a grounded answer"]
+  end
+  db -. compared against .-> sim
+```
 
-**12. Retrieval strategy.** `top_k` default 5 (matches contract). Metadata filtering available (e.g. by `source`). **No-match handling:** below a similarity floor **[ASSUMPTION: threshold tuned on baseline]**, return an empty `results` array — a success, so the host can pass "found nothing" to the model verbatim and refuse.
+**Chunking.** I split on the markdown `##` heading, not a fixed number of tokens. Every document is saved with `##` marking a real topic boundary — one FAQ, one warranty clause. Splitting there keeps each chunk about one thing, which is what makes a citation trustworthy: the `section` field maps to an actual heading. No overlap between sections, since the boundaries are real. For any section over ~400 words (the long disclosures) I do a second split with about 50 words of overlap so no clause gets orphaned. Each chunk carries `source`, `section`, `chunk_id`, and `document_type` (returns / warranty / delivery / payments / order_tracking). A fixed size would chop the short FAQ for no reason and cut through the middle of clauses in the long docs. **[Verify — I tune on real Recall@5, and fall back to a heading-then-token hybrid if headings alone underperform.]**
 
-**13. Failure handling.** Server down → host degrades (partial + note). Empty retrieval → refuse, don't invent. Model answering without evidence → system prompt forbids it and groundedness scoring (100% target) catches it.
+**Vector store.** ChromaDB, local and on disk. One collection, `retail_docs`; each record is `{content, embedding, source, section, chunk_id, document_type}`. The `chunk_id` looks like `retail-doc-3:chunk-12` — the exact format from contract v1, so citations line up across all four servers. Similarity is **cosine**, and I normalize scores to 0–1 before returning them (also contract v1, so they're comparable across servers whatever store each intern uses).
+
+**Embedding, local.** Per the manager (2026-08-11), embedding runs on my own machine, not GB10, with any small model I like. I'm using **`bge-small-en-v1.5`** through `sentence-transformers` — about 130 MB, good on English, fine on CPU, and realistic for the 300 ms target. Backups, all local: `all-MiniLM-L6-v2` (smaller and faster) or `bge-base-en-v1.5` (bigger, higher recall). Since each of us may embed with a different model, the contract normalizes the score to 0–1 so results stay comparable. **[ASSUMPTION — I confirm the pick on measured Recall@5 and switch within this local set if it misses.]** The corpus is all English, so I don't need a multilingual model like bge-m3.
+
+**Retrieval.** `top_k` defaults to 5 (matches the contract). Metadata filtering is there if I need it (e.g. by `source`). If nothing clears a similarity floor **[ASSUMPTION — the floor is tuned at baseline]**, I return an empty `results` array. That's a success, not an error, so the client can tell the model "found nothing" and let it refuse.
+
+**When things fail.** Server down → the client answers from the rest, with a note. Nothing retrieved → refuse, don't invent. Model answering with no evidence → the system prompt forbids it and the groundedness score (100% target) catches it.
 
 ---
 
-## 10. Phases 2 & 3 — outline (half page)
+## 10. Phases 2 and 3 (outline)
 
-**Phase 2 (records).** Data I'll need: ~4–6 SQLite tables — `orders`, `line_items`, `shipments`, `returns`, `customers` — a few hundred to a few thousand rows, **consistent with my documents** (if a doc says refunds take 5 working days, the data shows ~5, with a few exceptions). Include awkward cases: a duplicate charge, a partially shipped order, a return already under review, a customer with two accounts. 3–4 documented reference customers for demos. Tools (parameterised, **not** text-to-SQL): e.g. `kb_retail_query_orders(customer_ref, from_date, to_date, status)`. Results capped + paginated with a truncation flag. What would change my phase-1 design if wrong: the citation format must already carry table+row provenance, so I design §1's citation map to hold record refs now.
+**Phase 2 (records).** I'll need about 4–6 SQLite tables — `orders`, `line_items`, `shipments`, `returns`, `customers` — a few hundred to a few thousand rows, and consistent with my documents (if a doc says refunds take five working days, the data shows about five, with a few exceptions). I'll include the awkward cases agents actually call about: a duplicate charge, a partly shipped order, a return already under review, a customer with two accounts. Plus a few documented reference customers for demos. The tools are parameterised, not text-to-SQL — e.g. `kb_retail_query_orders(customer_ref, from_date, to_date, status)` — with results capped and paginated. The one thing this changes in my phase-1 design: the citation format has to carry table + row already, so I build the citation map to hold record references now.
 
-**Phase 3 (actions).** One write tool: `kb_retail_create_return(order_id, line_item_id, reason)` → returns a return/RMA reference. Missing required field **fails loudly**, never defaults. Client collects fields, confirms with the user showing exact fields, then executes. What would change phase-1: the host's loop already has the confirm-before-write pause (§5).
+**Phase 3 (the action).** One write tool, `kb_retail_create_return(order_id, line_item_id, reason)`, returning a return reference. A missing required field fails loudly — it never defaults. The client collects the fields, shows them, waits for a yes, then submits. The loop already has that confirm-before-write pause from §5.
 
-Full schemas, result caps, confirmation flow, context budget, and prompt formatting go in the **design addendum** (before phase-2 build, with contract v2).
+Full schemas, result caps, the confirmation flow, token budgets and formatting go in the design addendum, before I build phase 2, with contract v2.
 
 ---
 
-## 11. Plan (this is a graded deliverable)
+## 11. Plan
 
-Two dates are fixed; I plan the rest at half-day granularity, with slack labelled as slack.
+Two dates are fixed. I plan the rest in half-days and label slack as slack.
 
-**Fixed:** Task starts Fri 7 Aug 2026 · Design doc + contract v1 due **Wed 12 Aug 2026**, presented at the **3pm team meeting** — each intern walks through their own doc (no slides), followed by group discussion and next steps.
+**Fixed:** work started Fri 7 Aug 2026. Design doc and contract v1 are due **Wed 12 Aug 2026**, presented at the **3 pm team meeting** — each of us walks through our own doc (no slides), then group discussion and next steps.
 
-**Gates in order (sequence fixed; dates chosen — shared ones marked [AGREE]):**
-
-| Gate | Meaning | Target date |
+| Gate | What it means | Date |
 |------|---------|-------------|
-| Design review + present | Walk through this doc at the 3pm team meeting (no slides); group discussion + next steps; no code before approval | Wed 12 Aug, 3pm |
-| Baseline scorecard | Eval set + harness done, first numbers — **before** the server | **[TODO]** ~Fri 15 Aug |
-| Interop day (v1) | All 4 servers live, cross-tested vs contract v1 | **[AGREE — shared]** |
+| Design review | Walk through this doc at the 3 pm meeting; no code before approval | Wed 12 Aug, 3 pm |
+| Baseline scorecard | Eval set + harness done, first numbers — before the server | **[TODO]** ~Fri 15 Aug |
+| Interop day (v1) | All four servers live, tested against contract v1 | **[AGREE — shared]** |
 | Phase 1 demo | Working document chatbot in the UI | **[AGREE — shared]** |
-| Phase 2 & 3 demo | Records, composite, a case raised end to end | **[AGREE — shared]** |
-| Final demo + retro | Everything + before/after numbers | **[AGREE — shared]** |
+| Phase 2 & 3 demo | Records, composite answers, a case raised end to end | **[AGREE — shared]** |
+| Final demo + retro | Everything, with before/after numbers | **[AGREE — shared]** |
 
-**Effort per phase, and what drives it (half-day units, [ASSUMPTION] — my least-confident estimates):**
+**Rough effort, in half-day units [ASSUMPTION — these are my least-confident guesses]:**
 
-- **Eval set + harness — 1.5 days.** Driven by hand-writing 25–30 questions with known answers and a one-command harness. Gate before server.
-- **Corpus + ingestion — 1 day.** 22 real public retail docs (four companies, deliberately messy, ≥1 contradicting pair), chunk + embed **locally** on my host (no GB10 contention, since embedding is off GB10).
-- **Phase 1 server (search + resources + prompt) + Inspector — 1.5 days.** Both transports; must pass Inspector and run in a third-party host unmodified.
-- **Client + tool-call loop + 4-server interop + UI — 2.5 days.** Known-hard; where time disappears; capped.
-- **Phase 2 dataset + query tools — 2 days.** Dataset ~1 day; query tool schemas need **[AGREE]** across all four (contract v2).
+- **Eval set + harness — 1.5 days.** Writing 28 questions with known answers, plus the one-command harness. Gate before the server.
+- **Corpus + ingestion — 1 day.** 22 real docs, chunk and embed locally.
+- **Phase 1 server + Inspector — 1.5 days.** Both transports, has to pass Inspector and run in someone else's host unchanged.
+- **Client + loop + four-server interop + UI — 2.5 days.** The known-hard part, where time disappears. Capped.
+- **Phase 2 dataset + query tools — 2 days.** Dataset about a day; the query schemas need agreement across all four (contract v2).
 - **Phase 3 write tool + confirmation — 1 day.**
-- **Tuning + token reduction + final scorecard + retro — 1.5 days.**
+- **Tuning + token cut + final scorecard + retro — 1.5 days.**
 
-**Dependencies (can't parallelise out of these):** ingestion → retrieval → MCP server → client → phases 2 & 3. Blocked-on-others: contract v1 (all four), interop day + all demos (shared, machines up), GB10/Ollama availability.
+**Order I can't get around:** ingestion → retrieval → server → client → phases 2 and 3. Blocked on others: contract v1, interop day and the demos (shared, machines up), and GB10 being available.
 
-**Where my risk is:** the client + interop estimate (2.5d) is least confident. If it slips, I flag it the day I know, not on the gate — a silent slip makes three other people miss a gate too.
-
----
-
-## 12. Assumptions register (summary)
-
-Every **[ASSUMPTION]** above, and how I resolve it: stack (build Inspector test day 1), vector store & embedding (measure recall on real corpus), chunk strategy (heading-split; tune / fall to hybrid on Recall@5), routing method (measure early, host-side fallback ready), Recall@1 target (argue accept-set if contradictions bite). Every **[AGREE]** is a contract-v1 / shared-schedule item. Resolved values now baked in: spec `2026-07-28`; GB10 Ollama `10.10.150.150:11434` = **shared chat model only** (Qwen3 8B, client-called); **embedding local on my host** (`bge-small-en-v1.5`, off GB10); my host `10.10.180.132:8003`; UI plain HTML/JS. Design review is the **3pm Wed 12 Aug** meeting (walk through the doc, then group discussion + next steps). Only remaining **[TODO]**: the shared demo dates (interop + three demos), filled once the team fixes them.
+The estimate I'd flag is the client + interop one (2.5 days). If it slips, I say so the day I know — a quiet slip makes three other people miss a gate too.
 
 ---
 
-*End v1.0. Peer-review with the other three before submitting. Expect one revision round — do not submit at the last hour.*
+## 12. Assumptions, in one place
+
+Everything tagged **[ASSUMPTION]** above and how I settle it: the stack (Inspector test on day 1), the vector store and embedding model (measure recall on the real corpus), the chunking (heading split; tune or fall back to a hybrid on Recall@5), the routing method (measure early, classifier ready as backup), and the Recall@1 target (argue for an accept-set if the contradictions bite). Everything tagged **[AGREE]** is a contract-v1 or shared-schedule item.
+
+What's already settled: spec `2026-07-28`; GB10 (`10.10.150.150:11434`) runs the shared chat model only (Qwen3 8B, client-called); embedding is local on my host (`bge-small-en-v1.5`, off GB10); my server is `10.10.180.132:8003`; the UI is plain HTML/JS. The only open **[TODO]** is the shared demo dates, which we fix as a team.
+
+---
+
+*End of v1.0. I'll get the other three to read it before I submit, and expect one round of changes.*
