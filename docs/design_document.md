@@ -40,7 +40,7 @@ The only thing I share with the team is the **chat model**. It runs on the centr
 Everything else runs on my own machine (`10.10.180.132`): the UI, the client, the MCP server, the vector store, and the embedding model. **Embedding is local** — the server turns a query into a vector itself, using a small model on my host. Nothing about embedding touches GB10 (manager, 2026-08-11).
 
 ```mermaid title="Figure 1 — Phase 1 architecture and data flow (retail)"
-flowchart TD
+flowchart LR
   user(["Agent on call"])
   subgraph host["My machine — 10.10.180.132"]
     ui["Web UI (HTML / JS)"]
