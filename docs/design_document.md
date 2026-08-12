@@ -40,7 +40,7 @@ The only thing I share with the team is the **chat model**. It runs on the centr
 Everything else runs on my own machine (`10.10.180.132`): the UI, the client, the MCP server, the vector store, and the embedding model. **Embedding is local** — the server turns a query into a vector itself, using a small model on my host. Nothing about embedding touches GB10 (manager, 2026-08-11).
 
 ```mermaid title="Figure 1 — Phase 1 architecture and data flow (retail)"
-flowchart LR
+flowchart TD
   user(["Agent on call"])
   subgraph host["My machine — 10.10.180.132"]
     ui["Web UI (HTML / JS)"]
@@ -69,7 +69,7 @@ flowchart LR
 *Figure 1. The solid boxes are what exists in phase 1. The server embeds the query with a local model — that's retrieval plumbing, not generation — and never reaches GB10. GB10 only holds the chat model, and only the client calls it.*
 
 ```mermaid title="Figure 2 — Where phase 2 and phase 3 tools attach"
-flowchart LR
+flowchart TD
   loop["Client tool-call loop"]
   subgraph mcp["Retail MCP server — no chat model"]
     proto["MCP protocol layer"]
@@ -239,7 +239,7 @@ Each server call has a timeout. If it times out or the connection drops, the cli
 This is what actually enforces grounding, citations and refusals, so it's worth getting an early draft down even if it changes. It has five parts:
 
 ```mermaid
-flowchart LR
+flowchart TD
   sp["System prompt"] --> g["Grounding:<br/>only tool results"]
   sp --> ts["Tool choice:<br/>search / query / action"]
   sp --> ci["Citations:<br/>name the source"]
@@ -338,7 +338,7 @@ The estimate I trust least is the client loop plus four-server interop (§9). If
 Here's the phase-1 pipeline in one picture:
 
 ```mermaid
-flowchart LR
+flowchart TD
   subgraph build["Built once"]
     d["22 documents"] --> ch["Split on ## headings"] --> em1["Embed each chunk<br/>(local bge-small)"] --> db[("ChromaDB")]
   end
