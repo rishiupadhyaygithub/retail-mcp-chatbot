@@ -3,7 +3,7 @@
 **Author:** Rishi — Intern 3 (Retail / e-commerce)
 **Version:** 1.0 (draft for approval)
 **Due:** end of Wednesday 12 August 2026 (Design-approved gate)
-**Repos:** code + docs in my own repo `rishiupadhyaygithub/retail-mcp-chatbot`; the shared team repo holds the **contract only** (per manager: code and docs are per-intern, not namespaced in one shared repo)
+**Repos:** code + docs in my own repo `rishiupadhyaygithub/retail-mcp-chatbot`. Per manager: code and docs are per-intern; the shared team repo holds the **contract only** and is otherwise unused (even documents are individual).
 
 > **Legend.** Text marked **[ASSUMPTION]** is a guess I will verify — each says how. Text marked **[AGREE]** must be settled jointly with the other three interns (contract v1). Text marked **[TODO]** is a value I fill once I have it (e.g. my machine's IP). Per the brief: a document that labels its uncertainty is stronger than one that performs confidence.
 
@@ -32,7 +32,7 @@ My domain: documents = order tracking, returns, delivery failures, payments, war
 
 ### Components and what runs where
 
-The only shared resource is the LLM. **Ollama runs on the central GB10 server** (`10.10.150.150:11434`, both embeddings and chat). Everything else runs on **my own machine** (`10.10.180.132`), including the retail MCP server (HTTP transport on port **8003**).
+The only shared resource is the **chat model**. **Ollama on the central GB10 server** (`10.10.150.150:11434`) hosts the **chat model only** — called by the client, never by my MCP server. **Embedding runs locally on my own machine** (`10.10.180.132`): the retail MCP server (HTTP transport on port **8003**) embeds queries with a local model via a local library, so nothing embedding-related touches GB10 (per manager, 2026-08-11). Everything except the shared chat model runs on my machine.
 
 ```mermaid title="Figure 1 — Phase 1 architecture and data flow (retail)"
 flowchart LR
@@ -40,27 +40,28 @@ flowchart LR
   subgraph host["My machine — 10.10.180.132"]
     ui["Web UI (HTML / JS)"]
     loop["Tool-call loop + session mgmt<br/>routing · per-server timeout · citations"]
-    subgraph mcp["Retail MCP server :8003 — NO LLM"]
+    subgraph mcp["Retail MCP server :8003 — NO chat LLM"]
       proto["MCP protocol layer<br/>stdio / streamable HTTP"]
       search["kb_retail_search"]
+      embed["Local embedder<br/>(sentence-transformers)"]
       chroma[("Chroma vector store")]
-      docs["15–40 corpus docs"]
+      docs["22 corpus docs"]
     end
   end
   subgraph gb10["Shared GB10 — 10.10.150.150:11434"]
-    ollama["Ollama<br/>chat + embeddings"]
+    ollama["Ollama<br/>chat model only (Qwen3 8B)"]
   end
   other["3 other interns' servers<br/>Banking · Hospitality · Telecom"]
   user --> ui --> loop
   loop -- "chat: tool defs + prompt" --> ollama
   loop -- "tools/call" --> proto
   proto --> search --> chroma
-  search -. "embed query (bge-m3)" .-> ollama
+  search -. "embed query (local)" .-> embed
   chroma -- "ingested" --> docs
   loop -- "streamable HTTP" --> other
 ```
 
-*Figure 1. Solid components exist in phase 1. The server calls the embedding model (bge-m3) to vectorize a query — retrieval infrastructure, not generation — but never the chat model. All reasoning stays in the client.*
+*Figure 1. Solid components exist in phase 1. The server embeds a query with a **local** embedding model on my host — retrieval infrastructure, not generation — and never touches GB10 or the chat model. GB10 hosts the shared chat model, called only by the client. All reasoning stays in the client.*
 
 ```mermaid title="Figure 2 — Where phase 2 (records) and phase 3 (action) attach"
 flowchart LR
@@ -100,7 +101,7 @@ Example: *"How long does a refund take, and did order 10231's refund actually go
 
 ### Server / client boundary (explicit)
 
-- **Server:** takes a query, retrieves/looks up, returns data + metadata. Never generates prose. It **does** call the embedding model (`bge-m3` on GB10) to turn a query into a vector — retrieval, not reasoning. "No LLM in the server" means no *chat / generation* model, ever; the embedding model is retrieval infrastructure, like the vector index itself.
+- **Server:** takes a query, retrieves/looks up, returns data + metadata. Never generates prose. It **does** run a **local** embedding model on my host to turn a query into a vector — retrieval, not reasoning, and entirely off GB10. "No LLM in the server" means no *chat / generation* model, ever; the local embedder is retrieval infrastructure, like the vector index itself. The chat model (on GB10) is called only by the client — no direct contact between the chat model and the MCP server (confirmed with the manager).
 - **Client:** all reasoning — routing, tool selection, multi-round loop, grounding, citation, refusal, confirmation for writes.
 
 ### Where phase 2 & 3 tools attach
@@ -147,13 +148,13 @@ By phase 2 the model sees, across four servers, **two tool types each** (search 
 2. **System prompt encodes the rule.** "Policy/how-does-it-work → search. Specific account/order/number → query. Change state → action, and only after confirming with the user." (Full text in §5.)
 3. **Server selection by domain match.** Route on which industry the question is about; a comparative question ("do bank and telco refunds differ?") fans out to two servers.
 4. **Composite handling.** Questions needing both a document and a record trigger two tool types in one turn (multi-round loop, §5).
-5. **Measured, not asserted.** Routing accuracy (server ≥90%, tool-type ≥90%, spurious ≤1/query) is in the scorecard (§7). **[ASSUMPTION]** description-driven routing hits target on a 7B model; if not, my fallback is a lightweight pre-classification step in the host (still no LLM in the *server*).
+5. **Measured, not asserted.** Routing accuracy (server ≥90%, tool-type ≥90%, spurious ≤1/query) is in the scorecard (§7). **[ASSUMPTION]** description-driven routing hits target on an 8B model; if not, my fallback is a lightweight pre-classification step in the host (still no chat LLM in the *server*).
 
 ---
 
 ## 4. Chat model — with evidence
 
-**Model: `qwen2.5:7b-instruct`** via Ollama on GB10. Chosen because Ollama's tool-calling varies sharply by model and some advertise it while doing it badly — discovering that in week 3 is fatal — so I verified a full round-trip now. Weaker models tested (mistral, gemma) were unreliable.
+**Model: `qwen3:8b`** (team-proposed, shared on GB10 — ~6–8 GB; the local embedder adds ~0.1–1.2 GB on my own host, not GB10). The chat model lives on GB10 and is called only by the client. Ollama's tool-calling varies sharply by model and some advertise it while doing it badly — discovering that in week 3 is fatal — so I verified a full round-trip on a Qwen-family instruct model now. Weaker models tested (mistral, gemma) were unreliable. **[AGREE]** all four interns share one GB10 chat model; Qwen3 8B is the current team pick.
 
 Verified tool-call round-trip (retail record lookup):
 
@@ -166,7 +167,7 @@ FINAL ANSWER: There are 42 units of Wireless Headphones (SKU12345) in stock, at 
 PASS: full tool-call loop worked.
 ```
 
-Script: `client/toolcall_test.py`. **[ASSUMPTION]** the same reliability holds once four servers' tools are in the catalogue at once; I re-test after phase-1 integration. **[AGREE]** the four of us confirm GB10 has this model pulled and that it handles tool-calling — an escalation item if not.
+Script: `client/toolcall_test.py` (verified on a `qwen2.5:7b-instruct` instance; I re-verify on `qwen3:8b` once it is pulled on GB10). **[ASSUMPTION]** the same reliability holds once four servers' tools are in the catalogue at once; I re-test after phase-1 integration. **[AGREE]** the four of us confirm GB10 has the agreed chat model (Qwen3 8B) pulled and that it handles tool-calling — an escalation item if not.
 
 ---
 
@@ -265,7 +266,7 @@ A single **plain HTML/JS page** served by the host — no framework, no build st
 | Four-way contract disagreement | Med | Bring a concrete draft (contract v1) to shorten debate; escalate if no convergence |
 | Retrieval quality on messy/contradictory corpus | Med | It's a bottomless pit — cap tuning time; report honestly |
 | My machine off during interop/demo → 3 others blocked | Low/High-impact | Keep awake + on network for all shared dates; verify reachability before interop |
-| Cold-start latency mistaken for bugs | Med | Report warm vs cold separately; stagger bulk ingestion (Ollama shared) |
+| Cold-start latency mistaken for bugs | Med | Report warm vs cold separately; chat model on shared GB10 unloads when idle — embedding is local, so no ingestion contention |
 
 Least-confident estimate: **the client's tool-call loop + four-server interop** (§9). If it slips, phase 1 demo slips.
 
@@ -277,13 +278,13 @@ Least-confident estimate: **the client's tool-call loop + four-server interop** 
 - **Deliberate contradiction pair:** Amazon's ~30-day standard return window vs Best Buy's 15-day window (14 days for cellular devices; a $45 restocking fee on activatable devices) — the system must surface the conflict, not blend the two into one wrong number. Bonus spread: IKEA 365-day and Target 90-day — four different windows for one question.
 - **Vocabulary deliberately differs** across companies: "return" (Amazon/Target) vs "return & exchange" (Best Buy) vs "returns & claims" (IKEA); "refund" vs "credit / money back"; "package / parcel" vs "order"; "restocking fee" (Best Buy) vs "No Lemon Policy" (Target) vs no such concept (IKEA). Retrieval must match on meaning, not string overlap.
 - **Mixed length:** short (a single account-return FAQ, ~60 words) through long (a full terms-of-sale / limited-warranty disclosure, several thousand words across many subsections) — uniform length hides chunking bugs.
-- **Language:** all sources are English (US retailers). None non-English is required; I run one non-English query at baseline to confirm bge-m3 degrades gracefully rather than crashing.
+- **Language:** all sources are English (US retailers). None non-English is required; I run one non-English query at baseline to confirm the embedder degrades gracefully rather than crashing.
 
 **9. Ingestion & chunking.** **Split by section (markdown `##` heading), not fixed token count.** Every sourced doc is saved as markdown with `##` marking natural topic boundaries (an individual FAQ, a named warranty clause). Splitting on those boundaries keeps each chunk topically self-contained, which is what makes a citation trustworthy — the `section` field maps 1:1 to a real heading. **Overlap:** none between sections (boundaries are semantic, not arbitrary); for any section over ~400 words (the long disclosure docs), a secondary split with ~50-word overlap so no clause is orphaned. **Metadata per chunk:** `source` (doc title), `section` (heading text), `chunk_id`, `document_type` ∈ {`returns`, `warranty`, `delivery`, `payments`, `order_tracking`}. **Why not fixed-token:** a fixed size would cut the short FAQ needlessly and slice mid-clause through the long disclosures — the brief flags uniform chunking as the weak default. **Verify:** tune on real Recall@5; if heading-split underperforms on the long docs, fall back to heading-then-token hybrid before phase 2 adds token pressure.
 
 **10. Vector store & data model.** ChromaDB (local, persistent on disk). One collection (`retail_docs`); schema per record: `{content, embedding, source, section, chunk_id, document_type}`. **`chunk_id` format `retail-doc-<n>:chunk-<n>`** (e.g. `retail-doc-3:chunk-12`) — the exact contract-v1 format so citations are portable across all four servers. Indexing: HNSW (Chroma default; negligible impact at <100 chunks). Similarity: **cosine, scores normalized 0–1** before return (contract v1 — comparable across all four servers regardless of store). Why Chroma: metadata filtering + persistence + near-zero setup; weighed against FAISS (faster, no built-in metadata filter → more glue).
 
-**11. Embedding model.** `bge-m3` via Ollama on GB10 (the brief's suggested default). Why: strong retrieval quality and multilingual — though my corpus is all English (US retailers), so the multilingual capacity is headroom, not a current requirement. I run one non-English query at baseline to confirm it degrades gracefully. **[ASSUMPTION]** Alternative held in reserve: `nomic-embed-text` (lighter) — switch only if bge-m3 misses the ≤300ms retrieval target or underperforms on measured Recall@5.
+**11. Embedding model (local, on my host — not GB10).** Per the manager (2026-08-11), all embedding runs on my own machine, off GB10, with any library/small model of my choice. **Pick: `BAAI/bge-small-en-v1.5`** via `sentence-transformers` (local, ~130 MB, strong English retrieval, CPU-friendly, ≤300 ms target realistic). Reserve alternatives (all local): `all-MiniLM-L6-v2` (~90 MB, lighter/faster) or `bge-base-en-v1.5` (heavier, higher recall). Because each intern embeds locally with a possibly different model, the contract normalizes `score` to 0–1 so results stay comparable across servers. **[ASSUMPTION]** confirm the pick on measured Recall@5 at baseline and switch within this local set if it misses target. Corpus is all English, so bge-m3's multilingual headroom isn't needed.
 
 **12. Retrieval strategy.** `top_k` default 5 (matches contract). Metadata filtering available (e.g. by `source`). **No-match handling:** below a similarity floor **[ASSUMPTION: threshold tuned on baseline]**, return an empty `results` array — a success, so the host can pass "found nothing" to the model verbatim and refuse.
 
@@ -305,13 +306,13 @@ Full schemas, result caps, confirmation flow, context budget, and prompt formatt
 
 Two dates are fixed; I plan the rest at half-day granularity, with slack labelled as slack.
 
-**Fixed:** Task starts Fri 7 Aug 2026 · Design doc + contract v1 due **end of Wed 12 Aug 2026**.
+**Fixed:** Task starts Fri 7 Aug 2026 · Design doc + contract v1 due **Wed 12 Aug 2026**, presented at the **3pm team meeting** — each intern walks through their own doc (no slides), followed by group discussion and next steps.
 
 **Gates in order (sequence fixed; dates chosen — shared ones marked [AGREE]):**
 
 | Gate | Meaning | Target date |
 |------|---------|-------------|
-| Design approved | This doc approved; no code before it | Wed 12 Aug |
+| Design review + present | Walk through this doc at the 3pm team meeting (no slides); group discussion + next steps; no code before approval | Wed 12 Aug, 3pm |
 | Baseline scorecard | Eval set + harness done, first numbers — **before** the server | **[TODO]** ~Fri 15 Aug |
 | Interop day (v1) | All 4 servers live, cross-tested vs contract v1 | **[AGREE — shared]** |
 | Phase 1 demo | Working document chatbot in the UI | **[AGREE — shared]** |
@@ -321,7 +322,7 @@ Two dates are fixed; I plan the rest at half-day granularity, with slack labelle
 **Effort per phase, and what drives it (half-day units, [ASSUMPTION] — my least-confident estimates):**
 
 - **Eval set + harness — 1.5 days.** Driven by hand-writing 25–30 questions with known answers and a one-command harness. Gate before server.
-- **Corpus + ingestion — 1 day.** 15–40 real public retail docs (3–4 companies, deliberately messy, ≥1 contradicting pair), chunk + embed. Ollama shared → stagger my bulk run.
+- **Corpus + ingestion — 1 day.** 22 real public retail docs (four companies, deliberately messy, ≥1 contradicting pair), chunk + embed **locally** on my host (no GB10 contention, since embedding is off GB10).
 - **Phase 1 server (search + resources + prompt) + Inspector — 1.5 days.** Both transports; must pass Inspector and run in a third-party host unmodified.
 - **Client + tool-call loop + 4-server interop + UI — 2.5 days.** Known-hard; where time disappears; capped.
 - **Phase 2 dataset + query tools — 2 days.** Dataset ~1 day; query tool schemas need **[AGREE]** across all four (contract v2).
@@ -336,7 +337,7 @@ Two dates are fixed; I plan the rest at half-day granularity, with slack labelle
 
 ## 12. Assumptions register (summary)
 
-Every **[ASSUMPTION]** above, and how I resolve it: stack (build Inspector test day 1), vector store & embedding (measure recall on real corpus), chunk strategy (heading-split; tune / fall to hybrid on Recall@5), routing method (measure early, host-side fallback ready), Recall@1 target (argue accept-set if contradictions bite). Every **[AGREE]** is a contract-v1 / shared-schedule item. Resolved values now baked in: spec `2026-07-28`, GB10 Ollama `10.10.150.150:11434`, my host `10.10.180.132:8003`, UI plain HTML/JS. Only remaining **[TODO]**: the shared dates (interop + three demos), filled once the team fixes them.
+Every **[ASSUMPTION]** above, and how I resolve it: stack (build Inspector test day 1), vector store & embedding (measure recall on real corpus), chunk strategy (heading-split; tune / fall to hybrid on Recall@5), routing method (measure early, host-side fallback ready), Recall@1 target (argue accept-set if contradictions bite). Every **[AGREE]** is a contract-v1 / shared-schedule item. Resolved values now baked in: spec `2026-07-28`; GB10 Ollama `10.10.150.150:11434` = **shared chat model only** (Qwen3 8B, client-called); **embedding local on my host** (`bge-small-en-v1.5`, off GB10); my host `10.10.180.132:8003`; UI plain HTML/JS. Design review is the **3pm Wed 12 Aug** meeting (walk through the doc, then group discussion + next steps). Only remaining **[TODO]**: the shared demo dates (interop + three demos), filled once the team fixes them.
 
 ---
 
