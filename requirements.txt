@@ -1,0 +1,30 @@
+# requirements.txt — Contact Center Knowledge Assistant (Retail / Intern 3)
+# Phase 1: corpus ingest + local embedding + Chroma vector store + eval harness.
+# The MCP server NEVER calls a chat LLM — no LLM client belongs in this file.
+# All versions pinned exactly. Versions already present on the dev machine are
+# pinned to what is installed, so `pip install -r` is a no-op for them.
+
+# --- Vector store ---------------------------------------------------------
+# Chroma 1.x line. Pinned exactly because the 0.4 -> 0.5 -> 1.0 API changes
+# (PersistentClient, get_or_create_collection, query() return shape) are
+# breaking. 1.x is also the first line that accepts numpy>=2, which this
+# machine already has.
+# Pin confirmed present on PyPI 2026-08-13 (`pip index versions chromadb`).
+chromadb==1.0.20
+
+# --- Local embedding ------------------------------------------------------
+# BAAI/bge-small-en-v1.5 runs locally via sentence-transformers.
+# Does NOT run on the GB10 box.
+sentence-transformers==5.5.1
+torch==2.12.0
+transformers==5.12.0
+huggingface-hub==1.19.0
+
+# --- Numerics -------------------------------------------------------------
+numpy==2.2.6
+
+# --- Token counting (token-efficiency metric in the baseline scorecard) ---
+tiktoken==0.13.0
+
+# --- Next phase, do not install yet ---------------------------------------
+# mcp==<pin-when-phase-2-starts>   # official MCP Python SDK

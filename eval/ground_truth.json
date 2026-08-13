@@ -1,0 +1,174 @@
+{
+  "schema_version": 1,
+  "generated": "2026-08-13",
+  "author": "Rishi - Intern 3 (Retail/e-commerce)",
+  "eval_set": "eval/eval_set.md",
+  "corpus_root": "data/corpus",
+  "source_id_format": "<brand>/<filename>.md, relative to data/corpus/ (e.g. amazon/returns.md)",
+  "scoreable_count": 11,
+  "eval_set_total": 28,
+  "scoring": {
+    "recall_at_5": "1 if any expected_doc appears anywhere in the top-k results, else 0",
+    "recall_at_1": "1 if the single top-ranked result is an expected_doc, else 0",
+    "points_per_question": 9.09,
+    "note": "n = 11, so one question is worth ~9.09 points. Recall@5 >= 85% allows at most 1 miss (10/11 = 90.9% passes, 9/11 = 81.8% fails). Recall@1 >= 60% allows at most 4 misses (7/11 = 63.6%)."
+  },
+  "provenance": "All 22 corpus files were opened and read in full before any path was emitted; every path listed here exists under data/corpus/ (amazon 6, bestbuy 5, ikea 6, target 5). Scoreable = the 7 pure Document questions (1-7) plus the document half of the 4 Composite questions (14-17). Everything else needs phase 2, phase 3, or another intern's server.",
+  "questions": [
+    {
+      "number": 1,
+      "question": "how long till they get their money back on a return?",
+      "category": "Document",
+      "expected_docs": [
+        "amazon/refund_timelines.md",
+        "target/returns.md",
+        "bestbuy/returns.md"
+      ],
+      "rationale": "Vocab test: 'money back' must match 'refund' chunks. amazon/refund_timelines.md: \"3-5 business days for the refund amount to appear in your account\" (and \"Allow up to 30 days to receive a refund\"). target/returns.md § Refund methods and timing: \"Third-party credit cards: up to 5 days\". bestbuy/returns.md § Refund timing (returns by mail): \"it is processed within 7-10 business days\". ikea/returns.md is excluded - it states the refund *method* (\"Refunds are made in the same form of payment originally used\") but gives no timing, so it cannot answer 'how long'."
+    },
+    {
+      "number": 2,
+      "question": "customer's parcel never showed up — what's our process?",
+      "category": "Document",
+      "expected_docs": [
+        "amazon/order_tracking.md",
+        "bestbuy/order_tracking.md"
+      ],
+      "rationale": "amazon/order_tracking.md § If you can't find your package: \"If tracking shows delivered but you haven't received it, check with a receptionist or neighbor and visit 'Find a Missing Package That Shows As Delivered.'\" plus the status meaning \"Undeliverable: your package couldn't be delivered, and will be returned to Amazon.\" bestbuy/order_tracking.md § Still can't find it: \"Call 1-888-BEST BUY (1-888-237-8289) with your order number ready\". The delivery.md files are excluded - they cover outbound rates/speeds, not non-delivery process."
+    },
+    {
+      "number": 3,
+      "question": "can they send back opened electronics?",
+      "category": "Document",
+      "expected_docs": [
+        "bestbuy/returns.md",
+        "target/returns.md",
+        "amazon/returns.md"
+      ],
+      "rationale": "bestbuy/returns.md is the sharpest: the window \"applies to new, clearance, open-box, refurbished, and pre-owned products\" with \"Cell phones, cellular tablets, mobile hotspots, and cellular wearables: 14 days\". target/returns.md: \"Electronics and entertainment items (excluding Apple and Beats products) must be returned or exchanged within 30 days\" against \"Most unopened items ... in new condition\". amazon/returns.md § Condition requirements: \"opened or used items may be subject to a partial refund\". ikea/returns.md excluded - its \"Open products: 180 days\" covers opened goods but IKEA has no electronics category, so it does not answer the question asked."
+    },
+    {
+      "number": 4,
+      "question": "what's covered under warranty and for how long?",
+      "category": "Document",
+      "expected_docs": [
+        "ikea/warranty_terms.md",
+        "amazon/warranty.md",
+        "ikea/warranty.md"
+      ],
+      "rationale": "Question demands both scope and duration. ikea/warranty_terms.md: \"The SEKTION kitchen system carries a 25-year limited warranty ... against defects in material and workmanship\" and \"sofas and armchairs remains in force for 10 years\". amazon/warranty.md: \"Amazon Basics products are warranted against defects in materials and workmanship ... for one year from the date of original retail purchase\". ikea/warranty.md: \"Appliance coverage runs 365 days from purchase\" and installers \"provide warranties for 5 years post-completion\". bestbuy/warranty.md and target/warranty.md are excluded - both describe coverage (\"covers qualified repairs\", \"parts and labor coverage ... during the term of the plan\") but state no term length, so neither answers the 'for how long' half."
+    },
+    {
+      "number": 5,
+      "question": "they want to return after 40 days, are we allowed?",
+      "category": "Document",
+      "expected_docs": [
+        "amazon/returns.md",
+        "bestbuy/returns.md"
+      ],
+      "rationale": "Refusal case, but the return-window passage must still be retrieved to ground the 'no'. amazon/returns.md: \"Most items can be returned ... within 30 days of delivery\" - 40 > 30. bestbuy/returns.md: \"Most products can be returned or exchanged within 15 days for a full refund\" - 40 > 15. Only these two windows are shorter than 40 days and therefore produce the expected denial. target/returns.md (90 days) and ikea/returns.md (365/180 days) are deliberately excluded: retrieving them would ground a 'yes', which is not the expected behaviour for this question.",
+      "accept_set_note": "Hardest item in the set and the most likely Recall@1 failure. This is an intentionally narrow accept set: it scores whether retrieval surfaces the windows that justify the expected refusal, not merely whether it surfaces 'a return policy'. If the baseline shows this is the only miss, argue the accept-set case in design doc §7 rather than quietly widening the list here."
+    },
+    {
+      "number": 6,
+      "question": "returns window AND who pays return shipping?",
+      "category": "Document",
+      "expected_docs": [
+        "amazon/returns.md",
+        "target/returns.md",
+        "bestbuy/returns.md",
+        "bestbuy/delivery.md"
+      ],
+      "rationale": "Two-part question. Window half: amazon/returns.md \"within 30 days of delivery\", target/returns.md \"returned within 90 days\", bestbuy/returns.md \"within 15 days\". Return-shipping-cost half is only stated inside the returns docs: amazon/returns.md \"A prepaid return label is generated for eligible items\" (Amazon pays), target/returns.md \"A return label may be printed for mail-in returns\", bestbuy/returns.md routes returns in-store (\"Bring the item with all contents, packaging, and proof of purchase to a store\") and deducts the fee \"from the refund where it applies\". bestbuy/delivery.md is the corpus's explicit shipping-cost doc: \"a $35 minimum order is required to qualify for free shipping; orders under $35 may incur a shipping fee\"."
+    },
+    {
+      "number": 7,
+      "question": "does every store charge a 'restocking fee' on returns?",
+      "category": "Document",
+      "expected_docs": [
+        "bestbuy/returns.md",
+        "ikea/returns.md",
+        "target/returns.md"
+      ],
+      "rationale": "Deliberate cross-document conflict - both sides must be retrievable. Fee side: bestbuy/returns.md \"A $45 restocking fee applies to Activatable Devices\", with its own carve-out \"There is no restocking fee if the product is unopened\". No-fee side: ikea/returns.md \"Only the net purchase price shown on the receipt is refunded\" (deductions are limited to unreturned promotional items - no restocking fee anywhere in the doc), and target/returns.md \"Most unopened items sold by Target in new condition and returned within 90 days receive a refund or exchange\" with \"Refunds typically go to the original payment method\" and no fee deduction. The correct answer flags that the policies differ rather than blending them."
+    },
+    {
+      "number": 14,
+      "question": "I was charged twice — is that allowed and did it actually happen? (document half only)",
+      "category": "Composite - document half",
+      "expected_docs": [
+        "amazon/charged_twice.md"
+      ],
+      "rationale": "Only one corpus doc covers duplicate-charge policy. amazon/charged_twice.md: \"What looks like a duplicate charge is often an authorization hold, not an actual second charge\", plus \"the bank ... cancels it and releases the funds within 5-7 days\" and \"If you believe you were genuinely double-charged, contact Amazon Customer Service\". The other three payments docs (bestbuy/payments.md, ikea/payments.md, target/payments.md) cover payment methods, financing and card discounts only - none mention duplicate or double charges, so none belong here.",
+      "accept_set_note": "Single-point-of-failure expected set: Recall@5 on this question is effectively a test of one chunk."
+    },
+    {
+      "number": 15,
+      "question": "can they return order [REF] — what's the window and is it eligible? (document half only)",
+      "category": "Composite - document half",
+      "expected_docs": [
+        "amazon/returns.md",
+        "bestbuy/returns.md",
+        "target/returns.md",
+        "ikea/returns.md"
+      ],
+      "rationale": "The policy half is the return-window plus eligibility rules; all four brand policies genuinely answer it. amazon/returns.md \"within 30 days of delivery, as long as they are in original or unused condition\"; bestbuy/returns.md \"within 15 days for a full refund. The return period begins the day you receive your product\"; target/returns.md \"Most unopened items ... returned within 90 days\"; ikea/returns.md \"New / unopened products: 365 days with proof of purchase\" and \"IKEA cannot process refunds or exchanges if merchandise is modified ... dirty, stained, or damaged\". Unlike Q5, no date is fixed by the question, so every window is an acceptable retrieval."
+    },
+    {
+      "number": 16,
+      "question": "parcel split into two — is partial delivery covered, and what shipped? (document half only)",
+      "category": "Composite - document half",
+      "expected_docs": [
+        "amazon/charged_twice.md",
+        "amazon/delivery.md"
+      ],
+      "rationale": "amazon/charged_twice.md § Multiple shipments is the only passage in the corpus that states split shipments are normal and permitted: \"Orders may be split into multiple shipments - or multiple orders ... The total amount charged should add up to the amount displayed when the order was placed.\" amazon/delivery.md supplies the per-shipment timing the agent needs for the second parcel: \"Two-Day Delivery takes two business days after an item ships.\" No dedicated partial-delivery policy document exists in the corpus.",
+      "accept_set_note": "Corpus gap. The only explicit split-shipment language in the whole corpus sits inside a document_type=payments doc, so a correct retrieval for a *delivery* question has to surface a payments chunk. If this question misses, read it as a corpus gap before reading it as a routing or embedding failure."
+    },
+    {
+      "number": 17,
+      "question": "refund on [REF] — how long should it take and did it go through? (document half only)",
+      "category": "Composite - document half",
+      "expected_docs": [
+        "amazon/refund_timelines.md",
+        "target/returns.md",
+        "bestbuy/returns.md"
+      ],
+      "rationale": "Policy half is the refund-timeline window. amazon/refund_timelines.md: \"it takes about 2 business days to process the refund and 3-5 business days for the refund amount to appear in your account\", with \"Allow up to 30 days to receive a refund\" as the outer bound. target/returns.md § Refund methods and timing: \"Target Circle Card: up to 2 days\" / \"Mail-in returns: 7-10 additional business days of processing after the item is received\". bestbuy/returns.md: \"Once a mailed return is received, it is processed within 7-10 business days ... it may take up to 10 days after processing to reflect on the account\"."
+    }
+  ],
+  "excluded_questions": [
+    {
+      "numbers": [8, 9, 10, 11, 12, 13],
+      "category": "Record",
+      "reason": "Needs the phase-2 SQLite dataset and query tools. Not retrievable from the document corpus."
+    },
+    {
+      "numbers": [14, 15, 16, 17],
+      "category": "Composite - record half",
+      "reason": "The document half of each is scored above. The record half needs phase 2."
+    },
+    {
+      "numbers": [18, 19, 20, 21],
+      "category": "Cross-server",
+      "reason": "Needs another intern's server (banking / telecom / hospitality) and the client's router."
+    },
+    {
+      "numbers": [22, 23, 24, 25],
+      "category": "Action",
+      "reason": "Needs phase-3 write tools and the client's confirmation flow."
+    },
+    {
+      "numbers": [26, 27, 28],
+      "category": "Unanswerable",
+      "reason": "Scores refusal behaviour, which lives in the client. Retrieval alone cannot pass or fail these; Q28 additionally needs phase-2 records."
+    }
+  ],
+  "corpus_gaps_known_at_baseline": [
+    "There is no amazon/payments.md. Amazon's payments coverage is two special-case documents (charged_twice.md, refund_timelines.md), both typed payments. A question like 'what payment methods does Amazon accept?' has no gold passage in this corpus.",
+    "Q6's 'who pays return shipping' half is only weakly covered: the corpus states prepaid/printable return labels exist (amazon, target) but no document states who bears the cost outright. bestbuy/delivery.md is included as the nearest genuine shipping-cost passage ($35 free-shipping threshold), though it covers outbound, not return, shipping.",
+    "Q16 (partial delivery) has no dedicated policy document - see its accept_set_note.",
+    "Q14 has a single-doc expected set - see its accept_set_note."
+  ],
+  "chunking_interaction_note": "With heading-only splitting (~97 chunks, ~40 words each) the Q1/Q17 answers live in tiny 30-50 word chunks ('## After the return is received', '## Refund timing (returns by mail)') that carry no brand name in the chunk body - brand appears only in the H1 and the YAML frontmatter. If chunk text does not inherit the document title, cross-brand disambiguation for Q1/Q7/Q17 is near-impossible for the embedder. This is direct evidence for the packed chunk target and for prepending the doc title/company to each chunk."
+}

@@ -12,3 +12,19 @@ ${HOME}
 .serena/
 .DS_Store
 **/.DS_Store
+
+# --- appended for phase 1 (vector store + model cache) ---
+# Chroma persistence directory (sqlite3 + HNSW index binaries)
+.chroma/
+chroma/
+chroma_db/
+data/chroma/
+*.sqlite3
+
+# Local embedding model cache — BAAI/bge-small-en-v1.5 weights, ~130MB
+.cache/
+models/
+.sentence_transformers_cache/
+
+# Eval harness run artifacts (keep the committed scorecard, drop raw runs)
+eval/runs/

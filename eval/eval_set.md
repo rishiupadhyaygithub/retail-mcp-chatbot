@@ -3,7 +3,7 @@
 **Author:** Rishi — Intern 3 (Retail)
 **Purpose:** 25–30 hand-written questions with expected behaviour, + the scorecard the harness produces. Baseline-gate deliverable — exists **before** the chatbot does.
 
-> **[TODO]** = fill once the real corpus + dataset exist (expected doc titles, real customer IDs). Questions are written now; expected sources are pinned when the corpus is built.
+> **Corpus sources are now pinned** — the 22 documents exist, so every document-grounded question below names its expected files. **[TODO]** now means dataset-only: the reference customer IDs in §B, which cannot be filled until the phase-2 SQLite data is generated.
 
 ---
 
@@ -26,19 +26,30 @@
 
 ## C. Questions
 
-Phrased the way an agent asks mid-call. Each records what *should* happen. `expected_source` is **[TODO]** until the corpus is built.
+Phrased the way an agent asks mid-call. Each records what *should* happen.
+
+> **This file is the human-readable form. `eval/ground_truth.json` is the machine-readable form the harness actually reads** — it holds the same expected document sets plus the quoted passage that justifies each one. The two must be kept in sync: change a question or an expected source here, change it there in the same commit, or the scorecard stops describing this document. All paths below are relative to `data/corpus/`.
+>
+> **11 of the 28 questions are scoreable at the baseline gate** — the 7 Document questions and the document half of the 4 Composite ones. Record, Cross-server, Action and Unanswerable questions need phase 2/3 or another intern's server, so they carry no expected corpus path yet. At 11 questions each miss costs 9.09 points, so the ≥85% Recall@5 gate allows exactly one miss (10/11 = 90.9%; 9/11 = 81.8% fails).
 
 ### Document (7) — incl. two-document answers + vocabulary differing from source
 
 | # | Question (agent voice) | Should do | Expected |
 |---|------------------------|-----------|----------|
-| 1 | "how long till they get their money back on a return?" | search | refund-window passage; note "money back" must match a "refund" chunk (vocab differs) |
-| 2 | "customer's parcel never showed up — what's our process?" | search | delivery-failure passage |
-| 3 | "can they send back opened electronics?" | search | returns-eligibility passage |
-| 4 | "what's covered under warranty and for how long?" | search | warranty passage |
-| 5 | "they want to return after 40 days, are we allowed?" | search → **refuse/deny** | return-window passage; answer = no |
-| 6 | "returns window AND who pays return shipping?" | search (**two documents**) | returns-policy + shipping-cost docs |
-| 7 | "does every store charge a 'restocking fee' on returns?" | search (**vocab conflict across docs**) | Best Buy $45 activatable-device fee vs IKEA / Target (no such fee) — flag they differ |
+| 1 | "how long till they get their money back on a return?" | search | refund-window passage; note "money back" must match a "refund" chunk (vocab differs) — `amazon/refund_timelines.md`, `target/returns.md`, `bestbuy/returns.md` |
+| 2 | "customer's parcel never showed up — what's our process?" | search | delivery-failure passage — `amazon/order_tracking.md`, `bestbuy/order_tracking.md` |
+| 3 | "can they send back opened electronics?" | search | returns-eligibility passage — `bestbuy/returns.md`, `target/returns.md`, `amazon/returns.md` |
+| 4 | "what's covered under warranty and for how long?" | search | warranty passage stating **both** scope and term — `ikea/warranty_terms.md`, `amazon/warranty.md`, `ikea/warranty.md` |
+| 5 | "they want to return after 40 days, are we allowed?" | search → **refuse/deny** | return-window passage; answer = no — `amazon/returns.md` (30d), `bestbuy/returns.md` (15d) |
+| 6 | "returns window AND who pays return shipping?" | search (**two documents**) | returns-policy + shipping-cost docs — `amazon/returns.md`, `target/returns.md`, `bestbuy/returns.md`, `bestbuy/delivery.md` |
+| 7 | "does every store charge a 'restocking fee' on returns?" | search (**vocab conflict across docs**) | Best Buy $45 activatable-device fee vs IKEA / Target (no such fee) — flag they differ — `bestbuy/returns.md`, `ikea/returns.md`, `target/returns.md` |
+
+**Deliberate exclusions in the expected sets above** (recorded so the harness is not "fixed" later by quietly widening them):
+
+- **Q5 lists only the two windows shorter than 40 days.** `target/returns.md` (90 days) and `ikea/returns.md` (365 / 180 days) are excluded on purpose — retrieving them grounds a *yes*, and the expected behaviour here is a refusal. This is the strictest item in the set and the likeliest first Recall@1 failure; if it fails, the honest move is the accept-set argument under design doc §7, not a wider list.
+- **Q1 and Q17 exclude `ikea/returns.md`** — it gives the refund *method* ("same form of payment originally used") but no timing, so it cannot answer "how long".
+- **Q4 excludes `bestbuy/warranty.md` and `target/warranty.md`** — both describe coverage but publish no term length, so they fail the "for how long" half.
+- **Q3 excludes `ikea/returns.md`** — its "Open products: 180 days" covers opened goods, but IKEA sells no electronics.
 
 ### Record (6) — exact lookups, filtered lists, ≥1 aggregate
 
@@ -55,10 +66,16 @@ Phrased the way an agent asks mid-call. Each records what *should* happen. `expe
 
 | # | Question | Should do | Expected |
 |---|----------|-----------|----------|
-| 14 | "**I was charged twice — is that allowed and did it actually happen?**" | search (payments policy) + query (duplicate charge) | policy + the duplicate-charge row |
-| 15 | "can they return order [REF] — what's the window and is it eligible?" | query_orders + search (returns policy) | order date + policy → eligible/not |
-| 16 | "parcel split into two — is partial delivery covered, and what shipped?" | search (delivery policy) + query_shipments | policy + partial-shipment rows |
-| 17 | "refund on [REF] — how long should it take and did it go through?" | search + query_returns | policy window + return status |
+| 14 | "**I was charged twice — is that allowed and did it actually happen?**" | search (payments policy) + query (duplicate charge) | policy + the duplicate-charge row; document half = `amazon/charged_twice.md` |
+| 15 | "can they return order [REF] — what's the window and is it eligible?" | query_orders + search (returns policy) | order date + policy → eligible/not; document half = `amazon/returns.md`, `bestbuy/returns.md`, `target/returns.md`, `ikea/returns.md` |
+| 16 | "parcel split into two — is partial delivery covered, and what shipped?" | search (delivery policy) + query_shipments | policy + partial-shipment rows; document half = `amazon/charged_twice.md`, `amazon/delivery.md` |
+| 17 | "refund on [REF] — how long should it take and did it go through?" | search + query_returns | policy window + return status; document half = `amazon/refund_timelines.md`, `target/returns.md`, `bestbuy/returns.md` |
+
+**Only the document half of Q14–Q17 is scored at the baseline gate**; the record half waits for phase 2. Three corpus gaps found while pinning these, worth quoting in the scorecard commentary rather than papering over:
+
+1. **Q16 has no dedicated partial-delivery document.** The only explicit split-shipment language in the corpus sits inside `amazon/charged_twice.md`, which is typed `payments` — so a correct retrieval for a *delivery* question has to surface a payments chunk. Expect this to look like a routing failure when it is really a corpus gap.
+2. **Q6's "who pays return shipping" half is only weakly covered.** The corpus says prepaid/printable return labels exist (Amazon, Target) but no document states outright who bears the cost. `bestbuy/delivery.md` is included as the nearest genuine shipping-cost passage ($35 free-shipping threshold), though it covers outbound, not return, shipping.
+3. **Q14 has a single-point-of-failure expected set** — one document, so Recall@5 on Q14 is effectively a test of one chunk. Related: there is no `amazon/payments.md` at all; Amazon's payments coverage is two special-case documents. No question in this set asks "what payment methods does Amazon accept?", and none should until the gap is filled — it would score as a retrieval miss when the honest answer is missing corpus.
 
 ### Cross-server (4) — ≥2 need another industry, ≥1 comparative across two at once
 
@@ -116,7 +133,7 @@ Each layer measured separately.
 
 One script, one command, prints the scorecard as one table.
 
-- Reads this eval set (question + expected).
+- Reads `eval/ground_truth.json` (question + expected sources) — the machine-readable twin of §C, not this markdown.
 - Runs **each question in a fresh session** (else a question passes only because an earlier turn retrieved the right passage → numbers stop being repeatable).
 - Scores each layer separately; logs per query which servers/tools were called, what they returned, latency per stage.
 - **Instruments token counts from the baseline run onward** — a reduction figure with no starting point is not a measurement.
