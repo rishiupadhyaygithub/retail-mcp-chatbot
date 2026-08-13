@@ -16,7 +16,7 @@ import time
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
-from server.main import TRANSPORTS, create_server
+from server.main import TRANSPORTS, create_server, run_server
 from tests.test_mcp_server import FakeRetrieval
 
 
@@ -50,14 +50,14 @@ def test_contract_http_maps_to_streamable_http_not_sse() -> None:
 
 def test_streamable_http_serves_discovery_and_tool_calls_over_a_socket() -> None:
     port = _free_port()
-    server = create_server(FakeRetrieval(), host=HOST, port=port)
+    server = create_server(FakeRetrieval())
     threading.Thread(
-        target=lambda: server.run(TRANSPORTS["http"]), daemon=True
+        target=lambda: run_server(server, "http", host=HOST, port=port), daemon=True
     ).start()
     _wait_until_listening(port)
 
     async def exercise() -> tuple[list[str], dict]:
-        async with streamable_http_client(f"http://{HOST}:{port}/mcp") as (read, write, _):
+        async with streamable_http_client(f"http://{HOST}:{port}/mcp") as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 tools = await session.list_tools()

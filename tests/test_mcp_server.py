@@ -36,11 +36,11 @@ class EmptyRetrieval(FakeRetrieval):
 def test_tool_call_returns_contract_json() -> None:
     server = create_server(FakeRetrieval())
 
-    content, _structured = asyncio.run(
+    result = asyncio.run(
         server.call_tool("kb_retail_search", {"query": "when is my refund due?", "top_k": 1})
     )
 
-    payload = json.loads(content[0].text)
+    payload = json.loads(result.content[0].text)
     assert payload["query"] == "when is my refund due?"
     assert payload["total_found"] == 1
     assert payload["results"][0]["source"] == "Amazon refund timelines"
@@ -49,9 +49,12 @@ def test_tool_call_returns_contract_json() -> None:
 def test_missing_query_returns_the_application_error_payload() -> None:
     server = create_server(FakeRetrieval())
 
-    content, _structured = asyncio.run(server.call_tool("kb_retail_search", {}))
+    result = asyncio.run(server.call_tool("kb_retail_search", {}))
 
-    assert json.loads(content[0].text) == {
+    # contract v1 §6 errors are an application payload, not an MCP protocol error:
+    # the tool call itself succeeds and the agreed JSON shape is what it returns.
+    assert result.is_error is False
+    assert json.loads(result.content[0].text) == {
         "error": "invalid_parameter",
         "message": "query must be a non-empty string",
         "retryable": False,
@@ -61,9 +64,9 @@ def test_missing_query_returns_the_application_error_payload() -> None:
 def test_empty_search_is_a_successful_contract_response() -> None:
     server = create_server(EmptyRetrieval())
 
-    content, _structured = asyncio.run(server.call_tool("kb_retail_search", {"query": "no match"}))
+    result = asyncio.run(server.call_tool("kb_retail_search", {"query": "no match"}))
 
-    assert json.loads(content[0].text) == {
+    assert json.loads(result.content[0].text) == {
         "results": [],
         "query": "no match",
         "total_found": 0,
@@ -73,13 +76,13 @@ def test_empty_search_is_a_successful_contract_response() -> None:
 def test_wrong_type_and_unknown_parameter_return_application_errors() -> None:
     server = create_server(FakeRetrieval())
 
-    wrong_type, _ = asyncio.run(server.call_tool("kb_retail_search", {"query": 123}))
-    unknown, _ = asyncio.run(
+    wrong_type = asyncio.run(server.call_tool("kb_retail_search", {"query": 123}))
+    unknown = asyncio.run(
         server.call_tool("kb_retail_search", {"query": "refund", "brand": "amazon"})
     )
 
-    assert json.loads(wrong_type[0].text)["error"] == "invalid_parameter"
-    assert json.loads(unknown[0].text) == {
+    assert json.loads(wrong_type.content[0].text)["error"] == "invalid_parameter"
+    assert json.loads(unknown.content[0].text) == {
         "error": "invalid_parameter",
         "message": "unknown parameter: brand",
         "retryable": False,
@@ -90,17 +93,17 @@ def test_top_k_above_the_cap_returns_an_application_error() -> None:
     """An unbounded top_k returned the whole collection: 97 results, 10,120 tokens."""
     server = create_server(FakeRetrieval())
 
-    over, _ = asyncio.run(server.call_tool("kb_retail_search", {"query": "returns", "top_k": 100000}))
-    at_cap, _ = asyncio.run(
+    over = asyncio.run(server.call_tool("kb_retail_search", {"query": "returns", "top_k": 100000}))
+    at_cap = asyncio.run(
         server.call_tool("kb_retail_search", {"query": "returns", "top_k": MAX_TOP_K})
     )
 
-    assert json.loads(over[0].text) == {
+    assert json.loads(over.content[0].text) == {
         "error": "invalid_parameter",
         "message": f"top_k must not exceed {MAX_TOP_K}",
         "retryable": False,
     }
-    assert json.loads(at_cap[0].text)["total_found"] == 1
+    assert json.loads(at_cap.content[0].text)["total_found"] == 1
 
 
 def test_discovery_exposes_the_frozen_tool_schema() -> None:
@@ -109,8 +112,8 @@ def test_discovery_exposes_the_frozen_tool_schema() -> None:
     tools = asyncio.run(server.list_tools())
 
     tool = next(tool for tool in tools if tool.name == "kb_retail_search")
-    assert tool.inputSchema["required"] == ["query"]
-    assert tool.inputSchema["properties"]["query"] == {"type": "string"}
+    assert tool.input_schema["required"] == ["query"]
+    assert tool.input_schema["properties"]["query"] == {"type": "string"}
 
 
 def test_resource_and_prompt_are_discoverable_and_useful() -> None:

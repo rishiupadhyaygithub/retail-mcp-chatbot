@@ -17,8 +17,8 @@ from typing import Any, AsyncIterator, Protocol
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.utilities.func_metadata import ArgModelBase, FuncMetadata
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase, FuncMetadata
 from pydantic import ConfigDict
 
 from server.retrieval import RetrievalFailure, RetrievalUnavailable, RetailRetrieval, SearchResponse
@@ -56,8 +56,8 @@ _SEARCH_INPUT_SCHEMA: dict[str, Any] = {
 class _RawSearchArguments(ArgModelBase):
     """Pass raw tool arguments to the contract validator without losing extras.
 
-    FastMCP 1.27.2 otherwise rejects missing/wrongly typed values before a tool
-    can return contract_v1's required application payload, and silently ignores
+    The SDK otherwise rejects missing/wrongly typed values before a tool can
+    return contract_v1's required application payload, and silently ignores
     unknown keys.  The published JSON schema remains strict; this model exists
     only to route malformed *tool arguments* to the agreed error shape.
     """
@@ -87,14 +87,16 @@ def _as_json(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
-def create_server(
-    retrieval: RetrievalPort | None = None, *, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT
-) -> FastMCP:
-    """Create the MCP surface; injected retrieval keeps protocol tests independent of local data."""
+def create_server(retrieval: RetrievalPort | None = None) -> MCPServer:
+    """Create the MCP surface; injected retrieval keeps protocol tests independent of local data.
+
+    Host and port are not constructor arguments: since mcp 2.0.0 they belong to
+    the chosen transport and are passed by `run_server`.
+    """
     active_retrieval = retrieval or RetailRetrieval()
 
     @asynccontextmanager
-    async def lifespan(_: FastMCP) -> AsyncIterator[None]:
+    async def lifespan(_: MCPServer) -> AsyncIterator[None]:
         # Startup is intentionally eager: normal calls never reload the BGE model
         # or reconnect Chroma.  A failed local dependency remains an MCP server
         # that can return a controlled tool error rather than a stack trace.
@@ -106,14 +108,12 @@ def create_server(
                 LOGGER.exception("Retail retrieval was unavailable during server startup")
         yield
 
-    mcp = FastMCP(
+    mcp = MCPServer(
         "Retail Knowledge Base",
         instructions=(
             "Use kb_retail_search for retail policy and help documentation. "
             "Returned passages are retrieval evidence; do not invent facts beyond them."
         ),
-        host=host,
-        port=port,
         lifespan=lifespan,
     )
 
@@ -150,7 +150,7 @@ def create_server(
     # Keep tools/list aligned with the shared schema while deliberately sending
     # malformed tool *arguments* to our validator. This narrow customization is
     # necessary because the frozen contract requires an application payload for
-    # malformed input, whereas FastMCP's default behavior is a ToolError.
+    # malformed input, whereas the SDK's default behavior is a ToolError.
     registered_tool = mcp._tool_manager.get_tool("kb_retail_search")
     assert registered_tool is not None
     original_metadata = registered_tool.fn_metadata
@@ -194,6 +194,27 @@ def create_server(
     return mcp
 
 
+def run_server(
+    mcp: MCPServer,
+    transport: str,
+    *,
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
+) -> None:
+    """Start `mcp` on a contract v1 §7 transport name.
+
+    stdio takes no address; the network transports take host and port here
+    rather than at construction, which is where mcp 2.0.0 moved them.  The SDK
+    default host is 127.0.0.1, so binding every interface for interop day is an
+    explicit argument, never an inherited default.
+    """
+    sdk_transport = TRANSPORTS[transport]
+    if sdk_transport == "stdio":
+        mcp.run("stdio")
+        return
+    mcp.run(sdk_transport, host=host, port=port)
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the Retail MCP server.")
     parser.add_argument(
@@ -214,12 +235,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    mcp = create_server(host=args.host, port=args.port)
     # Contract v1 §7 names the network transport "http".  MCP deprecated the SSE
     # transport in spec revision 2025-03-26; this project targets 2026-07-28, so
     # "http" maps to Streamable HTTP (endpoint /mcp).  --transport sse remains
     # selectable for a client that has not migrated yet.
-    mcp.run(TRANSPORTS[args.transport])
+    run_server(create_server(), args.transport, host=args.host, port=args.port)
     return 0
 
 

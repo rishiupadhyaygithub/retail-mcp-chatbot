@@ -27,5 +27,10 @@ numpy==2.2.6
 tiktoken==0.13.0
 
 # --- MCP server ------------------------------------------------------------
-# FastMCP API and transport names below are verified against this exact SDK.
-mcp==1.27.2
+# 2.0.0 is the first line whose LATEST_PROTOCOL_VERSION is 2026-07-28, the spec
+# revision all four interns agreed to target. 1.27.2 caps at 2025-11-25, so on
+# that pin the design document's spec claim could not hold on the wire.
+# Server API and transport names are verified against this exact SDK:
+# FastMCP -> MCPServer, host/port moved from the constructor to run(), and
+# call_tool returns a CallToolResult instead of a tuple.
+mcp==2.0.0

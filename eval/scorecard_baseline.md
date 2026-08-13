@@ -1,13 +1,13 @@
 # Baseline Scorecard - Retail / E-commerce (Intern 3)
 
-Generated 2026-08-13 15:40:42 +04 by `eval/harness.py`. Phase 1 (documents) only, retrieval only.
+Generated 2026-08-13 16:16:23 +04 by `eval/harness.py`. Phase 1 (documents) only, retrieval only.
 
 | Run parameter | Value |
 |---|---|
 | Ground truth | `eval/ground_truth.json` |
 | Chroma path | `/Users/rishi/Desktop/TOPAZ MCP CHATBOT /data/chroma` |
 | Embedding model | `BAAI/bge-small-en-v1.5` (local, CPU; never on GB10) |
-| Model load (one-off) | 6043 ms |
+| Model load (one-off) | 5808 ms |
 | Query prefix | none |
 | top_k | 5 |
 | Token counting | tiktoken cl100k_base (GPT-family proxy) |
@@ -43,13 +43,13 @@ At n=11: Recall@5 >= 85% allows at most **1 miss** (10/11 = 90.9% passes, 9/11 =
 | Action safety: fabricated fields | phase-3 write tools not built | 0 | - | - | n/a - needs phase 3 |
 | Action safety: correct action routing | phase-3 write tools not built | 100% | - | - | n/a - needs phase 3 |
 | Action safety: confirmation shown | phase-3 write tools not built | 100% | - | - | n/a - needs phase 3 |
-| Latency: query embedding, WARM p50 | timed as its own stage, nearest-rank, n=10 | part of the <= 300 ms retrieval budget | 13.0 ms | 10.5 ms | - |
-| Latency: query embedding, WARM p95 | timed as its own stage, nearest-rank, n=10 | part of the <= 300 ms retrieval budget | 50.3 ms | 32.1 ms | - |
-| Latency: vector search, WARM p50 | timed as its own stage, nearest-rank, n=10 | part of the <= 300 ms retrieval budget | 0.8 ms | 0.7 ms | - |
-| Latency: vector search, WARM p95 | timed as its own stage, nearest-rank, n=10 | part of the <= 300 ms retrieval budget | 2.4 ms | 1.3 ms | - |
-| Latency: retrieval total, WARM p50 | embed + search, cold query discarded, n=10 | <= 300 ms | 13.6 ms | 11.2 ms | **PASS** |
-| Latency: retrieval total, WARM p95 | embed + search, cold query discarded, n=10 | <= 300 ms | 52.7 ms | 32.8 ms | **PASS** |
-| Latency: retrieval total, COLD | first query after model load (Q1), 1 sample | reported separately, no gate | 52.2 ms (embed 48.5 + search 3.7) | 13.8 ms (embed 12.6 + search 1.1) | - |
+| Latency: query embedding, WARM p50 | timed as its own stage, nearest-rank, n=10 | part of the <= 300 ms retrieval budget | 15.9 ms | 14.2 ms | - |
+| Latency: query embedding, WARM p95 | timed as its own stage, nearest-rank, n=10 | part of the <= 300 ms retrieval budget | 43.8 ms | 15.4 ms | - |
+| Latency: vector search, WARM p50 | timed as its own stage, nearest-rank, n=10 | part of the <= 300 ms retrieval budget | 0.9 ms | 0.7 ms | - |
+| Latency: vector search, WARM p95 | timed as its own stage, nearest-rank, n=10 | part of the <= 300 ms retrieval budget | 2.3 ms | 0.9 ms | - |
+| Latency: retrieval total, WARM p50 | embed + search, cold query discarded, n=10 | <= 300 ms | 16.8 ms | 14.9 ms | **PASS** |
+| Latency: retrieval total, WARM p95 | embed + search, cold query discarded, n=10 | <= 300 ms | 46.0 ms | 16.3 ms | **PASS** |
+| Latency: retrieval total, COLD | first query after model load (Q1), 1 sample | reported separately, no gate | 54.1 ms (embed 51.4 + search 2.7) | 16.0 ms (embed 15.2 + search 0.8) | - |
 | Latency: end-to-end p50 | needs the client + chat model | <= 4 s | - | - | n/a - needs client |
 | Latency: end-to-end p95 | needs the client + chat model | <= 10 s | - | - | n/a - needs client |
 | Latency: MCP transport overhead | needs the MCP server | <= 100 ms | - | - | n/a - needs phase 1 server |
@@ -65,33 +65,33 @@ At n=11: Recall@5 >= 85% allows at most **1 miss** (10/11 = 90.9% passes, 9/11 =
 
 | # | Question | Top-1 retrieved | @1 | @5 | Retrieval ms | Tokens (compact) | Tokens (verbose) |
 |---|---|---|---|---|---|---|---|
-| 1 | how long till they get their money back on a return? | `bestbuy/returns.md` | Y | Y | 52.2 *(cold)* | 561 | 706 |
-| 2 | customer's parcel never showed up — what's our process? | `amazon/order_tracking.md` | Y | Y | 52.7 | 656 | 801 |
-| 3 | can they send back opened electronics? | `target/returns.md` | Y | Y | 48.5 | 531 | 676 |
-| 4 | what's covered under warranty and for how long? | `amazon/warranty.md` | Y | Y | 13.2 | 723 | 868 |
-| 5 | they want to return after 40 days, are we allowed? | `ikea/returns.md` | n | Y | 14.0 | 543 | 688 |
-| 6 | returns window AND who pays return shipping? | `target/returns.md` | Y | Y | 13.6 | 492 | 637 |
-| 7 | does every store charge a 'restocking fee' on returns? | `bestbuy/returns.md` | Y | Y | 12.0 | 552 | 697 |
-| 14 | I was charged twice — is that allowed and did it actually happen? (document half only) | `amazon/charged_twice.md` | Y | Y | 32.7 | 606 | 752 |
-| 15 | can they return order [REF] — what's the window and is it eligible? (document half only) | `amazon/returns.md` | Y | Y | 30.5 | 547 | 693 |
-| 16 | parcel split into two — is partial delivery covered, and what shipped? (document half only) | `amazon/charged_twice.md` | Y | Y | 13.4 | 634 | 780 |
-| 17 | refund on [REF] — how long should it take and did it go through? (document half only) | `amazon/refund_timelines.md` | Y | Y | 13.1 | 600 | 746 |
+| 1 | how long till they get their money back on a return? | `bestbuy/returns.md` | Y | Y | 54.1 *(cold)* | 561 | 706 |
+| 2 | customer's parcel never showed up — what's our process? | `amazon/order_tracking.md` | Y | Y | 46.0 | 656 | 801 |
+| 3 | can they send back opened electronics? | `target/returns.md` | Y | Y | 39.8 | 531 | 676 |
+| 4 | what's covered under warranty and for how long? | `amazon/warranty.md` | Y | Y | 20.6 | 723 | 868 |
+| 5 | they want to return after 40 days, are we allowed? | `ikea/returns.md` | n | Y | 16.8 | 543 | 688 |
+| 6 | returns window AND who pays return shipping? | `target/returns.md` | Y | Y | 15.0 | 492 | 637 |
+| 7 | does every store charge a 'restocking fee' on returns? | `bestbuy/returns.md` | Y | Y | 11.7 | 552 | 697 |
+| 14 | I was charged twice — is that allowed and did it actually happen? (document half only) | `amazon/charged_twice.md` | Y | Y | 41.1 | 606 | 752 |
+| 15 | can they return order [REF] — what's the window and is it eligible? (document half only) | `amazon/returns.md` | Y | Y | 43.6 | 547 | 693 |
+| 16 | parcel split into two — is partial delivery covered, and what shipped? (document half only) | `amazon/charged_twice.md` | Y | Y | 16.8 | 634 | 780 |
+| 17 | refund on [REF] — how long should it take and did it go through? (document half only) | `amazon/refund_timelines.md` | Y | Y | 15.0 | 600 | 746 |
 
 ### Per-question detail - `packed` (n=11)
 
 | # | Question | Top-1 retrieved | @1 | @5 | Retrieval ms | Tokens (compact) | Tokens (verbose) |
 |---|---|---|---|---|---|---|---|
-| 1 | how long till they get their money back on a return? | `amazon/refund_timelines.md` | Y | Y | 13.8 *(cold)* | 1083 | 1228 |
-| 2 | customer's parcel never showed up — what's our process? | `amazon/order_tracking.md` | Y | Y | 12.5 | 1090 | 1235 |
-| 3 | can they send back opened electronics? | `target/returns.md` | Y | Y | 12.6 | 1158 | 1303 |
-| 4 | what's covered under warranty and for how long? | `amazon/warranty.md` | Y | Y | 14.1 | 1091 | 1236 |
-| 5 | they want to return after 40 days, are we allowed? | `ikea/returns.md` | n | Y | 13.0 | 1199 | 1344 |
-| 6 | returns window AND who pays return shipping? | `ikea/returns.md` | n | Y | 32.8 | 1172 | 1317 |
-| 7 | does every store charge a 'restocking fee' on returns? | `bestbuy/returns.md` | Y | Y | 11.1 | 1007 | 1152 |
-| 14 | I was charged twice — is that allowed and did it actually happen? (document half only) | `amazon/charged_twice.md` | Y | Y | 11.2 | 1101 | 1247 |
-| 15 | can they return order [REF] — what's the window and is it eligible? (document half only) | `amazon/returns.md` | Y | Y | 10.2 | 1173 | 1319 |
-| 16 | parcel split into two — is partial delivery covered, and what shipped? (document half only) | `amazon/charged_twice.md` | Y | Y | 10.6 | 1107 | 1253 |
-| 17 | refund on [REF] — how long should it take and did it go through? (document half only) | `amazon/refund_timelines.md` | Y | Y | 10.3 | 1164 | 1310 |
+| 1 | how long till they get their money back on a return? | `amazon/refund_timelines.md` | Y | Y | 16.0 *(cold)* | 1083 | 1228 |
+| 2 | customer's parcel never showed up — what's our process? | `amazon/order_tracking.md` | Y | Y | 14.8 | 1090 | 1235 |
+| 3 | can they send back opened electronics? | `target/returns.md` | Y | Y | 15.6 | 1158 | 1303 |
+| 4 | what's covered under warranty and for how long? | `amazon/warranty.md` | Y | Y | 16.3 | 1091 | 1236 |
+| 5 | they want to return after 40 days, are we allowed? | `ikea/returns.md` | n | Y | 15.4 | 1199 | 1344 |
+| 6 | returns window AND who pays return shipping? | `ikea/returns.md` | n | Y | 16.1 | 1172 | 1317 |
+| 7 | does every store charge a 'restocking fee' on returns? | `bestbuy/returns.md` | Y | Y | 13.4 | 1007 | 1152 |
+| 14 | I was charged twice — is that allowed and did it actually happen? (document half only) | `amazon/charged_twice.md` | Y | Y | 14.9 | 1101 | 1247 |
+| 15 | can they return order [REF] — what's the window and is it eligible? (document half only) | `amazon/returns.md` | Y | Y | 13.7 | 1173 | 1319 |
+| 16 | parcel split into two — is partial delivery covered, and what shipped? (document half only) | `amazon/charged_twice.md` | Y | Y | 13.4 | 1107 | 1253 |
+| 17 | refund on [REF] — how long should it take and did it go through? (document half only) | `amazon/refund_timelines.md` | Y | Y | 16.0 | 1164 | 1310 |
 
 ## How to read this scorecard
 

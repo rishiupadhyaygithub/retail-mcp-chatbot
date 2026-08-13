@@ -53,8 +53,24 @@ def _document_title(content: str, fallback: str) -> str:
 
 
 def cosine_distance_to_score(distance: float) -> float:
-    """Map Chroma cosine distance [0, 2] to contract similarity score [0, 1]."""
-    return round(max(0.0, min(1.0, 1.0 - distance / 2.0)), 4)
+    """Map Chroma cosine distance to the contract v1 §4 similarity score [0, 1].
+
+    `score = 1 - distance`, clamped. Chroma's cosine distance is `1 - cos`, so
+    this is the cosine similarity itself: identical text scores 1.0 and an
+    unrelated passage scores about 0.
+
+    The earlier mapping was `1 - distance / 2`, which spreads the full [-1, 1]
+    cosine range across [0, 1] and is defensible in isolation — but it puts an
+    unrelated passage at **0.5**, and contract v1 §4 promises a score
+    "normalized to 0-1 across all four servers". A client that thresholds at 0.5
+    would have treated noise as a half-decent match, and a teammate using the
+    conventional `1 - distance` would have produced numbers that look like ours
+    and mean something different. Ranking is unaffected either way: both are
+    monotonic in distance, so no recall figure moves.
+
+    Proposed to the team as the shared convention for contract v1.1.
+    """
+    return round(max(0.0, min(1.0, 1.0 - distance)), 4)
 
 
 class RetailRetrieval:

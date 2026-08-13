@@ -109,11 +109,29 @@ python3 client/toolcall_test.py                 # exits 1 if the model is unreac
 # python3 client/main.py                        (to add)
 ```
 
-Known state as of 13 Aug 2026: GB10 is unreachable from this machine and
-`qwen3:8b` is not pulled, so `toolcall_test.py` exits 1 with
-`model 'qwen3:8b' not found (status code: 404)`. Escalated per brief §13. The
-§4 transcript in the design document is still the `qwen2.5:7b-instruct` proxy
-run and gets replaced once GB10 is back.
+Known state as of 13 Aug 2026: GB10 is unreachable from this machine. Escalated
+per brief §13. The §4 transcript in the design document is still the
+`qwen2.5:7b-instruct` proxy run and gets replaced once GB10 is back.
+
+**Local fallback while GB10 is down.** Ollama runs on this host too, so the
+tool-call loop stays testable — point `OLLAMA_HOST` at `http://localhost:11434`.
+But this is an 8 GB M2, and model choice matters. Measured here, same prompt,
+warm figure excludes model load:
+
+| Model | Fits GPU | Total | Load | Warm | Verdict |
+|---|---|---|---|---|---|
+| `qwen3:1.7b` | 100% GPU, 1.5 GB | 5.1 s | 3.5 s | **~1.6 s** | use this locally |
+| `qwen2.5:7b-instruct` | 100% GPU, 4.6 GB | 19.0 s | 15.6 s | ~3.4 s | workable, tight |
+| `qwen3:8b` | **20% CPU / 80% GPU** | **57.7 s** | 9.1 s | ~48 s | unusable on 8 GB |
+
+`qwen3:8b` is the team's chosen chat model and it is pulled here, but it does
+not fit in this machine's unified memory and spills to CPU, so a nine-token
+reply takes ~58 s against a brief target of p50 ≤ 4 s end-to-end. That is
+exactly what the shared GB10 box is for. Develop against `qwen3:1.7b` locally,
+demo against `qwen3:8b` on GB10.
+
+Load only one model at a time — three resident at once exhausts 8 GB and Ollama
+starts returning empty responses. `ollama stop <model>` between runs.
 
 **Embedding never touches GB10.** The MCP server embeds queries itself with
 `sentence-transformers` (`bge-small-en-v1.5`) on this host, per the manager's
