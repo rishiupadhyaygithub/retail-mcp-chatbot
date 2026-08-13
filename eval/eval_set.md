@@ -129,14 +129,14 @@ Each layer measured separately.
 
 ---
 
-## E. Measurement harness (`eval/run_evals.py`)
+## E. Measurement harness (`eval/harness.py`)
 
 One script, one command, prints the scorecard as one table.
 
 - Reads `eval/ground_truth.json` (question + expected sources) — the machine-readable twin of §C, not this markdown.
-- Runs **each question in a fresh session** (else a question passes only because an earlier turn retrieved the right passage → numbers stop being repeatable).
+- Runs **each question independently** (no inter-question state; a warmup query per strategy is discarded before scoring so cold/warm timing is honest).
 - Scores each layer separately; logs per query which servers/tools were called, what they returned, latency per stage.
 - **Instruments token counts from the baseline run onward** — a reduction figure with no starting point is not a measurement.
-- Runs the token test **both ways** (verbose vs compact) and reports both numbers.
+- Runs the token test **both ways** (compact JSON with minimal separators, and verbose indented JSON) and reports both baselines. The ≥40% reduction target is measured against the compact baseline (the honest floor).
 
 _(Harness code lands at the baseline gate, with the first scorecard.)_

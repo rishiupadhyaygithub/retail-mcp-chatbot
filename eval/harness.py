@@ -187,6 +187,7 @@ class QResult:
     embed_ms: float
     search_ms: float
     tokens: int
+    tokens_verbose: int  # indented JSON: the worst-case naive baseline
 
     @property
     def total_ms(self) -> float:
@@ -217,6 +218,17 @@ class StrategyResult:
     @property
     def mean_tokens(self) -> float:
         return sum(r.tokens for r in self.results) / self.n
+
+    @property
+    def mean_tokens_verbose(self) -> float:
+        return sum(r.tokens_verbose for r in self.results) / self.n
+
+    def p95_latency(self) -> float:
+        """Warm p95 retrieval latency in ms."""
+        return percentile([r.total_ms for r in self.warm], 95.0) if self.warm else 0.0
+
+    def passes_latency(self) -> bool:
+        return self.p95_latency() <= 300.0
 
     def recall(self, at_1: bool = False) -> float:
         return 100.0 * sum(r.hit_at_1 if at_1 else r.hit_at_k for r in self.results) / self.n
@@ -257,6 +269,11 @@ def run_strategy(strategy: str, client: Any, db: Path, model: Any, questions: li
     coll = open_collection(client, name, db)
     out = StrategyResult(name=strategy, collection=name, chunk_count=coll.count())
     log(f"[{strategy}] collection {name!r}: {out.chunk_count} chunks")
+    # --- Warmup: one embed + one query, discarded, so cold/warm is honest per strategy ---
+    log(f"[{strategy}] warmup query (discarded)...")
+    _warmup_vec = model.encode(prefix + "warmup query for timing calibration", normalize_embeddings=True)
+    coll.query(query_embeddings=[_warmup_vec.tolist()], n_results=min(top_k, coll.count()),
+               include=["documents"])
     unresolved: set[str] = set()
     for q in questions:
         t0 = time.perf_counter()  # stage 1 of the <=300ms retrieval budget: embed the query locally
@@ -291,15 +308,15 @@ def run_strategy(strategy: str, client: Any, db: Path, model: Any, questions: li
             records.append(record)
 
         # NAIVE BASELINE payload: the whole tool result, verbatim, as a naive client would paste it into the
-        # prompt. Compact separators, because the cheapest plausible naive dump is the most honest number to
-        # have to beat by 40%.
+        # prompt. Two counts: compact (the honest floor) and verbose (indented, the worst-case ceiling).
         payload = {"results": records, "query": q["question"], "total_found": len(records)}
         tokens = counter.count(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+        tokens_verbose = counter.count(json.dumps(payload, ensure_ascii=False, indent=2))
         expected = set(q["expected_docs"])
         r = QResult(number=q["number"], question=q["question"], expected=q["expected_docs"],
                     retrieved=retrieved, hit_at_1=retrieved[0] in expected,
                     hit_at_k=bool(expected & set(retrieved)), embed_ms=embed_ms, search_ms=search_ms,
-                    tokens=tokens)
+                    tokens=tokens, tokens_verbose=tokens_verbose)
         out.results.append(r)
         log(f"  Q{r.number:>2} @1={'Y' if r.hit_at_1 else 'n'} @{top_k}={'Y' if r.hit_at_k else 'n'} "
             f"embed={embed_ms:.1f}ms search={search_ms:.1f}ms tokens={tokens}")
@@ -326,8 +343,9 @@ At n={n}: Recall@5 >= 85% allows at most **1 miss** (10/11 = 90.9% passes, 9/11 
 OUTRO = """## How to read this scorecard
 
 - **Retrieval only.** No chat LLM is called by this harness, and none will be called by the server. Rows needing generated answers, records, actions or another intern's server are marked `n/a` and left in the table, so the coverage gap is visible rather than implied.
-- **COLD vs WARM.** The first query of each strategy is reported on its own line and excluded from the warm percentiles; model load is a separate one-off line. With both strategies in one run the model loads once, so the second strategy's cold number carries Chroma's first-query cost but not the model load. p95 over {warm} warm samples is the nearest-rank value, i.e. the maximum observed - indicative, not tight.
-- **The token row is a BASELINE, not a result.** It is the cost of dumping the raw top-k tool result into the prompt verbatim as compact JSON. The >= 40% reduction target is measured against exactly this number.
+- **COLD vs WARM.** Each strategy runs a warmup query (embed + search, discarded) before scoring, so the cold row is a fair per-strategy measurement rather than an artifact of which strategy loaded the model. p95 over {warm} warm samples is the nearest-rank value, i.e. the maximum observed - indicative, not tight.
+- **Two token baselines.** Compact JSON (minimal separators) is the honest floor; verbose JSON (indented) is the worst-case ceiling. The >= 40% reduction target is measured against the compact baseline.
+- **Winner selection.** The winner is decided by: (1) Recall@5, (2) latency p95 <= 300 ms gate, (3) Recall@1 tiebreaker, in that order. A strategy that fails the latency gate cannot be the winner unless every strategy fails it.
 - **Exit code** reports whether the harness ran, not whether the targets passed. A FAIL row is a measurement, not a crash.
 """
 
@@ -365,8 +383,10 @@ def scorecard_rows(sr: StrategyResult, top_k: int) -> list[tuple[str, str, str, 
         ("Latency: end-to-end p95", "needs the client + chat model", "<= 10 s", "-", NA_CLIENT),
         ("Latency: MCP transport overhead", "needs the MCP server", "<= 100 ms", "-", "n/a - needs phase 1 server"),
         ("Latency: structured query", "needs the phase-2 SQLite tools", "<= 100 ms", "-", NA_P2),
-        ("Tokens: NAIVE BASELINE, raw JSON dump", f"verbatim top-{top_k} tool result as compact JSON, mean n={n}",
+        ("Tokens: NAIVE BASELINE (compact)", f"verbatim top-{top_k} tool result, compact JSON, mean n={n}",
          "BASELINE - the number to beat", f"{sr.mean_tokens:.0f} tokens/query", "BASELINE"),
+        ("Tokens: NAIVE BASELINE (verbose)", f"verbatim top-{top_k} tool result, indented JSON, mean n={n}",
+         "BASELINE - worst case", f"{sr.mean_tokens_verbose:.0f} tokens/query", "BASELINE"),
         ("Tokens: reduction vs NAIVE BASELINE", "needs the compaction layer, not built", ">= 40% cut", "-", NA_CLIENT),
         ("Robustness suite (9 cases)", "needs a running server + client", "no crashes", "-", NA_CLIENT),
     ]
@@ -405,11 +425,24 @@ def render(strategies: list[StrategyResult], top_k: int, counter: TokenCounter, 
         a(f"| {group[0][0]} | {group[0][1]} | {group[0][2]} | " + " | ".join(g[3] for g in group) + f" | {joined} |")
     a("")
     if len(strategies) > 1:
-        best = max(strategies, key=lambda s: (s.recall(), s.recall(at_1=True)))
-        tied = [s.name for s in strategies if s.recall() == best.recall()]
-        note = f" (tied on Recall@{top_k} with {', '.join(tied)}; broken on Recall@1)" if len(tied) > 1 else ""
-        a(f"**Measured winner on Recall@{top_k}: `{best.name}`**{note}. The winner is decided by measured "
-          f"Recall@{top_k}, not by preference.")
+        # Winner: (1) highest Recall@k, (2) passes latency p95 ≤ 300ms, (3) highest Recall@1 tiebreaker.
+        # A strategy that fails the latency gate cannot win unless every strategy fails it.
+        any_passes_latency = any(s.passes_latency() for s in strategies)
+        def winner_key(s: StrategyResult) -> tuple:
+            return (s.recall(), s.passes_latency() if any_passes_latency else True, s.recall(at_1=True))
+        best = max(strategies, key=winner_key)
+        tied_r5 = [s.name for s in strategies if s.recall() == best.recall()]
+        notes: list[str] = []
+        if len(tied_r5) > 1:
+            notes.append(f"tied on Recall@{top_k} with {', '.join(tied_r5)}")
+        if any_passes_latency and not all(s.passes_latency() for s in strategies):
+            failed = [s.name for s in strategies if not s.passes_latency()]
+            notes.append(f"{', '.join(failed)} excluded: p95 latency > 300 ms")
+        if len(tied_r5) > 1:
+            notes.append(f"broken on Recall@1")
+        note_str = f" ({'; '.join(notes)})" if notes else ""
+        a(f"**Measured winner: `{best.name}`**{note_str}. Winner decided by Recall@{top_k}, "
+          f"latency gate (p95 ≤ 300 ms), then Recall@1 — not by preference.")
         a("")
     for w in dict.fromkeys(w for s in strategies for w in s.warnings):
         a(f"> WARNING: {w}")
@@ -418,12 +451,12 @@ def render(strategies: list[StrategyResult], top_k: int, counter: TokenCounter, 
     for sr in strategies:
         a(f"### Per-question detail - `{sr.name}` (n={sr.n})")
         a("")
-        a(f"| # | Question | Top-1 retrieved | @1 | @{top_k} | Retrieval ms | Naive tokens |")
-        a("|---|---|---|---|---|---|---|")
+        a(f"| # | Question | Top-1 retrieved | @1 | @{top_k} | Retrieval ms | Tokens (compact) | Tokens (verbose) |")
+        a("|---|---|---|---|---|---|---|---|")
         for r in sr.results:
             a(f"| {r.number} | {r.question.replace('|', '/')} | `{r.retrieved[0]}` | "
               f"{'Y' if r.hit_at_1 else 'n'} | {'Y' if r.hit_at_k else 'n'} | "
-              f"{r.total_ms:.1f}{' *(cold)*' if r is sr.cold else ''} | {r.tokens} |")
+              f"{r.total_ms:.1f}{' *(cold)*' if r is sr.cold else ''} | {r.tokens} | {r.tokens_verbose} |")
         a("")
         for r in (r for r in sr.results if not r.hit_at_k):
             a(f"- **Q{r.number} missed @{top_k}**: expected one of `{', '.join(r.expected)}`; "

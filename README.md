@@ -40,7 +40,7 @@ export OLLAMA_HOST=http://10.10.150.150:11434   # chat ONLY (qwen3:8b), pulled o
 # EMBEDDING runs LOCALLY on my host (10.10.180.132), NOT on GB10:
 #   the MCP server embeds queries itself via sentence-transformers (bge-small-en-v1.5).
 #   Nothing embedding-related touches GB10 (per manager, 2026-08-11).
-pip install ollama sentence-transformers
+pip install -r requirements.txt
 ```
 
 ### 2. Verify the tool-call loop (works today)
@@ -50,10 +50,15 @@ python3 client/toolcall_test.py
 # Expect: TOOL CALL -> TOOL RESULT -> FINAL ANSWER -> PASS
 ```
 
-### 3. Ingest the document corpus  *(to add — Phase 1)*
+### 3. Ingest the document corpus
 
 ```bash
-# python3 data/ingest.py
+# Build both chunking strategies (heading + packed):
+python3 data/ingest.py --strategy heading --rebuild
+python3 data/ingest.py --strategy packed --rebuild
+
+# Dry-run stats only (no model load, no ChromaDB write):
+python3 data/ingest.py --strategy packed --stats
 ```
 
 ### 4. Start the server  *(to add — Phase 1)*
@@ -71,10 +76,14 @@ python3 client/toolcall_test.py
 # python3 client/main.py
 ```
 
-### 6. Run the eval harness  *(to add)*
+### 6. Run the eval harness
 
 ```bash
-# python3 eval/run_evals.py
+# Run against both strategies, scorecard to eval/scorecard_baseline.md:
+python3 eval/harness.py
+
+# Single strategy:
+python3 eval/harness.py --strategy packed --top-k 5
 ```
 
 ## Models
@@ -84,4 +93,4 @@ python3 client/toolcall_test.py
 
 ## Status
 
-Pre-build. Design doc, contract, and eval set drafted. Phase 1 (RAG server) is next.
+**Phase A (baseline gate) — DONE.** Corpus ingested (22 docs, 2 strategies), harness runs, baseline scorecard generated. Recall@5 = 100% (both strategies), Recall@1 = 90.9% heading / 81.8% packed. Phase B (MCP server) is next.
