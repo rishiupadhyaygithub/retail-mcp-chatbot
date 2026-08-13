@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 
-REPO_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = Path(__file__).resolve().parents[1]
 CHROMA_PATH = REPO_ROOT / "data" / "chroma"
 COLLECTION_NAME = "retail_docs_heading"
 EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"

@@ -3,8 +3,9 @@
 import asyncio
 import json
 
-from retrieval import SearchResponse, SearchResult
+from server.retrieval import SearchResponse, SearchResult
 from server.main import create_server
+from server.schemas import MAX_TOP_K
 
 
 class FakeRetrieval:
@@ -83,6 +84,23 @@ def test_wrong_type_and_unknown_parameter_return_application_errors() -> None:
         "message": "unknown parameter: brand",
         "retryable": False,
     }
+
+
+def test_top_k_above_the_cap_returns_an_application_error() -> None:
+    """An unbounded top_k returned the whole collection: 97 results, 10,120 tokens."""
+    server = create_server(FakeRetrieval())
+
+    over, _ = asyncio.run(server.call_tool("kb_retail_search", {"query": "returns", "top_k": 100000}))
+    at_cap, _ = asyncio.run(
+        server.call_tool("kb_retail_search", {"query": "returns", "top_k": MAX_TOP_K})
+    )
+
+    assert json.loads(over[0].text) == {
+        "error": "invalid_parameter",
+        "message": f"top_k must not exceed {MAX_TOP_K}",
+        "retryable": False,
+    }
+    assert json.loads(at_cap[0].text)["total_found"] == 1
 
 
 def test_discovery_exposes_the_frozen_tool_schema() -> None:

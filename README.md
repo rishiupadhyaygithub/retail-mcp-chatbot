@@ -13,7 +13,7 @@ Internship project: an **MCP server** for the **Retail** domain, plus a **chatbo
 | `docs/` | design document, addendum, retro |
 | `eval/` | eval set, harness, scorecards |
 | `conformance/` | reports on the other three interns' servers |
-| `server/` | MCP server (no LLM) |
+| `server/` | MCP server (no LLM) — protocol adapter plus the frozen `retrieval.py` |
 | `client/` | host, client sessions, UI |
 | `data/` | corpus sources list, ingestion scripts, dataset generator |
 | `prompts/` | system prompt, versioned |
@@ -70,9 +70,12 @@ python3 server/main.py --transport stdio
 python3 server/main.py --transport http --host 0.0.0.0 --port 8003
 ```
 
-The HTTP switch uses the pinned SDK's SSE transport (`/sse` and `/messages/`).
-See `server/README.md` for the contract surface and `server/conformance_matrix.md`
-for requirement-to-test traceability.
+`--transport http` is contract v1 §7's network transport and serves **MCP
+Streamable HTTP** at **`/mcp`** — interop clients connect to
+`http://10.10.180.132:8003/mcp`. `--transport sse` selects the pre-2025-03-26
+SSE transport (`/sse`, `/messages/`), which MCP has deprecated; it is kept only
+for a client that has not migrated. See `server/README.md` for the contract
+surface and `server/conformance_matrix.md` for requirement-to-test traceability.
 
 ### 5. Start the client  *(to add)*
 
@@ -101,6 +104,7 @@ python3 eval/harness.py --strategy packed --top-k 5
 
 **Phase B (MCP server) — IMPLEMENTED / local verification complete.**
 `kb_retail_search`, `kb_retail_documents`, and `kb_retail_search_template` are
-available over stdio and HTTP/SSE. The server uses the frozen heading collection
-and local embeddings only; it never calls GB10 or an LLM. Cross-machine interop
-and an unmodified third-party-client check remain the final acceptance steps.
+available over stdio and over MCP Streamable HTTP at `/mcp` (contract v1 §7's
+`http`). The server uses the frozen heading collection and local embeddings
+only; it never calls GB10 or an LLM. Cross-machine interop and an unmodified
+third-party-client check remain the final acceptance steps.

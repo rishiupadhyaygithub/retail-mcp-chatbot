@@ -5,7 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from retrieval import SearchResponse
+from server.retrieval import SearchResponse
+
+
+# Contract v1 §3 sets top_k's default but no ceiling.  Without one, top_k=100000
+# returns the whole collection: measured at 97 results / 10,120 tokens against a
+# 586-token naive baseline, a 17x context blowup from one bad argument.  The cap
+# is refused rather than silently clamped, so total_found never disagrees with
+# what the caller asked for.  Flagged for the team as a contract v1.1 item.
+MAX_TOP_K = 20
 
 
 @dataclass(frozen=True)
@@ -33,6 +41,8 @@ def validate_search_request(
         return invalid_parameter("query must be a non-empty string")
     if type(top_k) is not int or top_k <= 0:
         return invalid_parameter("top_k must be a positive integer")
+    if top_k > MAX_TOP_K:
+        return invalid_parameter(f"top_k must not exceed {MAX_TOP_K}")
     if filters is None:
         return SearchRequest(query=query, top_k=top_k, document_type=None)
     if type(filters) is not dict:

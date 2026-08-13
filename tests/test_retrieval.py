@@ -1,6 +1,6 @@
 """Public-contract tests for the frozen retail retrieval baseline."""
 
-from retrieval import RetailRetrieval
+from server.retrieval import RetailRetrieval
 
 
 def test_search_reuses_heading_collection_and_normalizes_scores() -> None:

@@ -431,16 +431,21 @@ def render(strategies: list[StrategyResult], top_k: int, counter: TokenCounter, 
         def winner_key(s: StrategyResult) -> tuple:
             return (s.recall(), s.passes_latency() if any_passes_latency else True, s.recall(at_1=True))
         best = max(strategies, key=winner_key)
-        tied_r5 = [s.name for s in strategies if s.recall() == best.recall()]
+        # Name only the OTHER tied strategies; listing the winner inside its own
+        # "tied with" clause reads as if it tied with itself.
+        tied_with = [s.name for s in strategies if s.recall() == best.recall() and s is not best]
         notes: list[str] = []
-        if len(tied_r5) > 1:
-            notes.append(f"tied on Recall@{top_k} with {', '.join(tied_r5)}")
+        if tied_with:
+            notes.append(
+                f"`{best.name}` tied on Recall@{top_k} with {', '.join(f'`{n}`' for n in tied_with)}, "
+                f"so the tie was broken on Recall@1 "
+                f"({best.recall(at_1=True):.1f}% vs "
+                f"{', '.join(f'{s.recall(at_1=True):.1f}%' for s in strategies if s.name in tied_with)})"
+            )
         if any_passes_latency and not all(s.passes_latency() for s in strategies):
             failed = [s.name for s in strategies if not s.passes_latency()]
             notes.append(f"{', '.join(failed)} excluded: p95 latency > 300 ms")
-        if len(tied_r5) > 1:
-            notes.append(f"broken on Recall@1")
-        note_str = f" ({'; '.join(notes)})" if notes else ""
+        note_str = f" — {'; '.join(notes)}" if notes else ""
         a(f"**Measured winner: `{best.name}`**{note_str}. Winner decided by Recall@{top_k}, "
           f"latency gate (p95 ≤ 300 ms), then Recall@1 — not by preference.")
         a("")

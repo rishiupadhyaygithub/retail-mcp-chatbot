@@ -21,7 +21,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.utilities.func_metadata import ArgModelBase, FuncMetadata
 from pydantic import ConfigDict
 
-from retrieval import RetrievalFailure, RetrievalUnavailable, RetailRetrieval, SearchResponse
+from server.retrieval import RetrievalFailure, RetrievalUnavailable, RetailRetrieval, SearchResponse
 from server.schemas import (
     SearchRequest,
     format_search_response,
@@ -33,6 +33,9 @@ from server.schemas import (
 LOGGER = logging.getLogger(__name__)
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8003
+
+# Contract v1 §7 transport names -> the SDK's transport names.
+TRANSPORTS = {"stdio": "stdio", "http": "streamable-http", "sse": "sse"}
 
 _SEARCH_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -195,9 +198,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the Retail MCP server.")
     parser.add_argument(
         "--transport",
-        choices=("stdio", "http"),
+        choices=("stdio", "http", "sse"),
         default=os.environ.get("MCP_TRANSPORT", "stdio"),
-        help="stdio for local clients; http runs FastMCP's SSE transport for interop.",
+        help=(
+            "stdio for local clients; http is contract v1's network transport and runs "
+            "MCP Streamable HTTP at /mcp; sse is the deprecated pre-2025-03-26 transport, "
+            "kept only for a client that cannot speak Streamable HTTP yet."
+        ),
     )
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
@@ -208,9 +215,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     mcp = create_server(host=args.host, port=args.port)
-    # FastMCP 1.27.2 has no transport named "http".  The project-level HTTP
-    # switch maps to its SSE transport, whose endpoints are /sse and /messages/.
-    mcp.run("stdio" if args.transport == "stdio" else "sse")
+    # Contract v1 §7 names the network transport "http".  MCP deprecated the SSE
+    # transport in spec revision 2025-03-26; this project targets 2026-07-28, so
+    # "http" maps to Streamable HTTP (endpoint /mcp).  --transport sse remains
+    # selectable for a client that has not migrated yet.
+    mcp.run(TRANSPORTS[args.transport])
     return 0
 
 
