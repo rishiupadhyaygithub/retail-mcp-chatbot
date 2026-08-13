@@ -26,5 +26,6 @@ numpy==2.2.6
 # --- Token counting (token-efficiency metric in the baseline scorecard) ---
 tiktoken==0.13.0
 
-# --- Next phase, do not install yet ---------------------------------------
-# mcp==<pin-when-phase-2-starts>   # official MCP Python SDK
+# --- MCP server ------------------------------------------------------------
+# FastMCP API and transport names below are verified against this exact SDK.
+mcp==1.27.2

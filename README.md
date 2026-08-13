@@ -61,14 +61,18 @@ python3 data/ingest.py --strategy packed --rebuild
 python3 data/ingest.py --strategy packed --stats
 ```
 
-### 4. Start the server  *(to add — Phase 1)*
+### 4. Start the server
 
 ```bash
 # stdio transport:
-# python3 server/main.py --transport stdio
+python3 server/main.py --transport stdio
 # HTTP transport (interop day) — retail = port 8003, bind to LAN not localhost:
-# python3 server/main.py --transport http --host 0.0.0.0 --port 8003
+python3 server/main.py --transport http --host 0.0.0.0 --port 8003
 ```
+
+The HTTP switch uses the pinned SDK's SSE transport (`/sse` and `/messages/`).
+See `server/README.md` for the contract surface and `server/conformance_matrix.md`
+for requirement-to-test traceability.
 
 ### 5. Start the client  *(to add)*
 
@@ -93,4 +97,10 @@ python3 eval/harness.py --strategy packed --top-k 5
 
 ## Status
 
-**Phase A (baseline gate) — DONE.** Corpus ingested (22 docs, 2 strategies), harness runs, baseline scorecard generated. Recall@5 = 100% (both strategies), Recall@1 = 90.9% heading / 81.8% packed. Phase B (MCP server) is next.
+**Phase A (baseline gate) — DONE.** Corpus ingested (22 docs, 2 strategies), harness runs, baseline scorecard generated. Recall@5 = 100% (both strategies), Recall@1 = 90.9% heading / 81.8% packed.
+
+**Phase B (MCP server) — IMPLEMENTED / local verification complete.**
+`kb_retail_search`, `kb_retail_documents`, and `kb_retail_search_template` are
+available over stdio and HTTP/SSE. The server uses the frozen heading collection
+and local embeddings only; it never calls GB10 or an LLM. Cross-machine interop
+and an unmodified third-party-client check remain the final acceptance steps.
