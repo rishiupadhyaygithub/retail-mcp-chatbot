@@ -31,26 +31,29 @@ Internship project: an **MCP server** for the **Retail** domain, plus a **chatbo
 
 > A colleague should be able to clone and run everything from this section alone. *(Commands marked `(to add)` land as each phase is built.)*
 
+**Steps 1–5 run entirely on your own machine, offline.** No GB10, no Ollama, no
+other intern's server, no network at all after `pip install`. Everything graded
+at the baseline gate — corpus, retrieval, MCP server, tests, scorecard — is in
+that offline set. The one thing that does need the shared GB10 chat model is
+step 6, and nothing above it depends on step 6.
+
+Verified by cloning this repo to an empty directory and running steps 1–5 in
+order: ingest exits 0 for both strategies, 11 tests pass, and the harness
+reproduces Recall@5 = 100%.
+
 ### 1. Prerequisites
 
 ```bash
-# Python 3.11+.
-# CHAT model runs on the shared GB10 Ollama server — the CLIENT points at it:
-export OLLAMA_HOST=http://10.10.150.150:11434   # chat ONLY (qwen3:8b), pulled on GB10
-# EMBEDDING runs LOCALLY on my host (10.10.180.132), NOT on GB10:
-#   the MCP server embeds queries itself via sentence-transformers (bge-small-en-v1.5).
-#   Nothing embedding-related touches GB10 (per manager, 2026-08-11).
+# Python 3.10+ (developed and verified on 3.10.0).
 pip install -r requirements.txt
 ```
 
-### 2. Verify the tool-call loop (works today)
+First run downloads the `bge-small-en-v1.5` weights (~130 MB) into the local
+Hugging Face cache. Every run after that is offline — the server opens the model
+with `local_files_only=True` and Chroma telemetry is disabled, so a started
+server makes no outbound request.
 
-```bash
-python3 client/toolcall_test.py
-# Expect: TOOL CALL -> TOOL RESULT -> FINAL ANSWER -> PASS
-```
-
-### 3. Ingest the document corpus
+### 2. Ingest the document corpus
 
 ```bash
 # Build both chunking strategies (heading + packed):
@@ -59,6 +62,14 @@ python3 data/ingest.py --strategy packed --rebuild
 
 # Dry-run stats only (no model load, no ChromaDB write):
 python3 data/ingest.py --strategy packed --stats
+```
+
+### 3. Run the tests
+
+```bash
+python3 -m pytest tests/ -q
+# Expect: 11 passed. Covers the contract payloads, the malformed-argument
+# errors, and a live Streamable HTTP server on a real socket.
 ```
 
 ### 4. Start the server
@@ -77,13 +88,7 @@ SSE transport (`/sse`, `/messages/`), which MCP has deprecated; it is kept only
 for a client that has not migrated. See `server/README.md` for the contract
 surface and `server/conformance_matrix.md` for requirement-to-test traceability.
 
-### 5. Start the client  *(to add)*
-
-```bash
-# python3 client/main.py
-```
-
-### 6. Run the eval harness
+### 5. Run the eval harness
 
 ```bash
 # Run against both strategies, scorecard to eval/scorecard_baseline.md:
@@ -92,6 +97,27 @@ python3 eval/harness.py
 # Single strategy:
 python3 eval/harness.py --strategy packed --top-k 5
 ```
+
+### 6. Anything needing the shared GB10 chat model  *(NOT required for 1–5)*
+
+Everything in this step talks to the team's shared Ollama box. Off that LAN, or
+with `qwen3:8b` not yet pulled, these fail — and nothing above depends on them.
+
+```bash
+export OLLAMA_HOST=http://10.10.150.150:11434   # chat ONLY (qwen3:8b), pulled on GB10
+python3 client/toolcall_test.py                 # exits 1 if the model is unreachable
+# python3 client/main.py                        (to add)
+```
+
+Known state as of 13 Aug 2026: GB10 is unreachable from this machine and
+`qwen3:8b` is not pulled, so `toolcall_test.py` exits 1 with
+`model 'qwen3:8b' not found (status code: 404)`. Escalated per brief §13. The
+§4 transcript in the design document is still the `qwen2.5:7b-instruct` proxy
+run and gets replaced once GB10 is back.
+
+**Embedding never touches GB10.** The MCP server embeds queries itself with
+`sentence-transformers` (`bge-small-en-v1.5`) on this host, per the manager's
+2026-08-11 decision.
 
 ## Models
 
