@@ -303,7 +303,7 @@ I report the **scorecard twice** — a baseline as soon as retrieval works, and 
 | Tokens | measured, then cut ≥40% vs dumping raw JSON, with no quality drop |
 | Robustness | pass/fail, none may crash: one server down, all down, empty query, huge query, wrong-language query, off-topic, 10,000-row match, missing customer ref, two identical requests at once |
 
-The harness is one script, `eval/run_evals.py`, run with one command. It reads the eval set, runs each question in a **fresh session** (otherwise a question passes only because an earlier turn happened to fetch the right passage, and the numbers stop meaning anything), scores each layer, and counts tokens from the baseline run on.
+The harness is one script, `eval/harness.py`, run with one command. It reads the eval set, runs each question in a **fresh session** (otherwise a question passes only because an earlier turn happened to fetch the right passage, and the numbers stop meaning anything), scores each layer, and counts tokens from the baseline run on.
 
 **A target I might push back on [ASSUMPTION]:** Recall@1 ≥60% could be tight if my corpus has genuinely conflicting policies — and the brief wants those. A passage can be "the right one" in more than one way. If the baseline shows this, I'll propose measuring Recall@1 against a set of acceptable passages, and explain why, rather than quietly missing the target.
 
