@@ -1,0 +1,20 @@
+# client/requirements.txt — chatbot client (host + tool-call loop + UI).
+#
+# Deliberately separate from the repo-root requirements.txt. That file states
+# "the MCP server NEVER calls a chat LLM — no LLM client belongs in this file",
+# and the split is what makes that claim checkable rather than a comment: the
+# server can be installed and run with no chat-model dependency present at all.
+#
+# The UI needs nothing. Design document §6 specifies one plain HTML/JS page with
+# no framework and no build step, served by `http.server` from the standard
+# library, so there is no web dependency to pin here.
+
+# --- Chat model client -----------------------------------------------------
+# Talks to Ollama: GB10 (`qwen3:8b`) for the demo, localhost (`qwen3:1.7b`)
+# while GB10 is unreachable. Point it with OLLAMA_HOST.
+ollama==0.6.2
+
+# --- MCP client sessions ---------------------------------------------------
+# Same pin as the server so both halves negotiate the same protocol version and
+# a client-side change can never silently diverge from what the server serves.
+mcp==2.0.0

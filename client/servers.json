@@ -1,0 +1,38 @@
+{
+  "_comment": [
+    "MCP servers the client connects to. Contract v1 §7 names the network",
+    "transport 'http'; on mcp==2.0.0 that is Streamable HTTP at /mcp.",
+    "Tools are NEVER hardcoded here — contract v1 §9 requires runtime",
+    "discovery, so only the address and a timeout live in this file.",
+    "The other three interns' entries stay disabled until interop day; set",
+    "'enabled': true and the client picks them up on the next restart with no",
+    "code change. A disabled or unreachable server must not break the client:",
+    "that is the graceful-degradation case the brief requires."
+  ],
+  "servers": [
+    {
+      "name": "retail",
+      "url": "http://127.0.0.1:8003/mcp",
+      "timeout_seconds": 15,
+      "enabled": true
+    },
+    {
+      "name": "healthcare",
+      "url": "http://10.10.180.0:8001/mcp",
+      "timeout_seconds": 15,
+      "enabled": false
+    },
+    {
+      "name": "banking",
+      "url": "http://10.10.180.0:8002/mcp",
+      "timeout_seconds": 15,
+      "enabled": false
+    },
+    {
+      "name": "telecom",
+      "url": "http://10.10.180.0:8004/mcp",
+      "timeout_seconds": 15,
+      "enabled": false
+    }
+  ]
+}

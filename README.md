@@ -34,8 +34,9 @@ Internship project: an **MCP server** for the **Retail** domain, plus a **chatbo
 **Steps 1–5 run entirely on your own machine, offline.** No GB10, no Ollama, no
 other intern's server, no network at all after `pip install`. Everything graded
 at the baseline gate — corpus, retrieval, MCP server, tests, scorecard — is in
-that offline set. The one thing that does need the shared GB10 chat model is
-step 6, and nothing above it depends on step 6.
+that offline set. **Step 6 is the chat UI**: it needs a chat model, but Ollama
+on this machine is enough. Only step 7 needs the shared GB10 box, and nothing
+above it depends on step 7.
 
 Verified by cloning this repo to an empty directory and running steps 1–5 in
 order: ingest exits 0 for both strategies, 11 tests pass, and the harness
@@ -98,7 +99,38 @@ python3 eval/harness.py
 python3 eval/harness.py --strategy packed --top-k 5
 ```
 
-### 6. Anything needing the shared GB10 chat model  *(NOT required for 1–5)*
+### 6. Talk to it — the chat UI on localhost
+
+Steps 1–5 prove the retrieval half but there is nothing to look at. This is the
+part a human uses. It needs a chat model; Ollama on **this** machine is enough,
+GB10 is not required.
+
+```bash
+pip install -r client/requirements.txt
+ollama pull qwen2.5:7b-instruct
+
+# terminal 1 — the MCP server
+python3 server/main.py --transport http --host 127.0.0.1 --port 8003
+
+# terminal 2 — the client + UI, then open http://127.0.0.1:8080
+python3 client/app.py
+```
+
+Type a question, get an answer with the passages it came from and every tool
+call one click away. Same loop without the browser:
+
+```bash
+python3 client/loop.py --trace "Can a customer return opened electronics?"
+```
+
+The UI binds `127.0.0.1` deliberately: the *server* binds every interface for
+interop day, but the UI has no authentication and is for one person at one desk.
+
+See `client/README.md` for the model choice (`qwen3:1.7b` cannot tool-call at
+all — 0 of 3 trials) and for the grounding gate that stops the model answering
+from memory with invented citations.
+
+### 7. Anything needing the shared GB10 chat model  *(NOT required for 1–6)*
 
 Everything in this step talks to the team's shared Ollama box. Off that LAN, or
 with `qwen3:8b` not yet pulled, these fail — and nothing above depends on them.
@@ -152,3 +184,13 @@ available over stdio and over MCP Streamable HTTP at `/mcp` (contract v1 §7's
 `http`). The server uses the frozen heading collection and local embeddings
 only; it never calls GB10 or an LLM. Cross-machine interop and an unmodified
 third-party-client check remain the final acceptance steps.
+
+**Phase C (client + UI) — first vertical slice running.** `client/` discovers
+tools at runtime from `client/servers.json`, runs the five-round tool-call loop
+against a local Ollama model, and serves a plain HTML/JS page on
+`127.0.0.1:8080`. Verified end to end against the live retail server: question
+in, `kb_retail_search` called, five passages returned, answer rendered with its
+sources and raw tool payloads. The other three servers stay `"enabled": false`
+in the config until interop day and their absence does not affect a turn.
+Still to come: the routing/answer-quality scorecard rows, which need this
+client plus the eval set, and the conformance reports, which need teammates.
