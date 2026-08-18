@@ -141,18 +141,29 @@ class RetailRetrieval:
         document_type: str | None = None,
     ) -> SearchResponse:
         self.initialize()
-        assert self._collection is not None
+        assert self._client is not None
         assert self._model is not None
         try:
             query_vector = self._model.encode(query, normalize_embeddings=True).tolist()
+            try:
+                assert self._collection is not None
+                n_count = self._collection.count()
+            except Exception:
+                self._collection = self._client.get_collection(name=self.collection_name)
+                n_count = self._collection.count()
+
             request: dict[str, Any] = {
                 "query_embeddings": [query_vector],
-                "n_results": min(top_k, self._collection.count()),
+                "n_results": min(top_k, n_count),
                 "include": ["documents", "metadatas", "distances"],
             }
             if document_type is not None:
                 request["where"] = {"document_type": document_type}
-            raw = self._collection.query(**request)
+            try:
+                raw = self._collection.query(**request)
+            except Exception:
+                self._collection = self._client.get_collection(name=self.collection_name)
+                raw = self._collection.query(**request)
         except Exception as exc:
             raise RetrievalFailure("retail search could not be completed") from exc
 
@@ -164,15 +175,16 @@ class RetailRetrieval:
             meta = dict(metadata or {})
             if not isinstance(content, str) or not isinstance(distance, (int, float)):
                 raise RetrievalFailure("retail search returned an invalid stored record")
-            source = str(meta.get("source", ""))
+            source_path = str(meta.get("source_path") or meta.get("source", ""))
+            source_title = str(meta.get("title") or meta.get("source_title") or _document_title(content, source_path))
             chunk_id = str(meta.get("chunk_id", ""))
-            if not source or not chunk_id:
+            if not source_path or not chunk_id:
                 raise RetrievalFailure("retail search returned an incomplete stored record")
             results.append(
                 SearchResult(
                     content=content,
-                    source=source,
-                    source_title=_document_title(content, source),
+                    source=source_path,
+                    source_title=source_title,
                     section=str(meta.get("section", "")),
                     score=cosine_distance_to_score(float(distance)),
                     chunk_id=chunk_id,
@@ -194,11 +206,12 @@ class RetailRetrieval:
         by_source: dict[str, dict[str, str]] = {}
         for content, metadata in zip(documents, metadatas):
             meta = dict(metadata or {})
-            source = str(meta.get("source", ""))
-            if source and isinstance(content, str):
-                by_source[source] = {
-                    "id": source,
-                    "title": _document_title(content, source),
+            source_path = str(meta.get("source_path") or meta.get("source", ""))
+            source_title = str(meta.get("title") or meta.get("source_title") or _document_title(content, source_path))
+            if source_path and isinstance(content, str):
+                by_source[source_path] = {
+                    "id": source_path,
+                    "title": source_title,
                     "document_type": str(meta.get("document_type", "")),
                 }
         return [by_source[source] for source in sorted(by_source)]

@@ -244,6 +244,7 @@ def load_documents() -> list[Document]:
 class Chunk:
     chunk_id: str
     source: str
+    title: str
     brand: str
     section: str
     document_type: str
@@ -337,7 +338,7 @@ def _group_to_chunk(doc: Document, group: list[Unit], m: int) -> Chunk:
         die(f"{doc.rel_path}: produced an empty chunk at chunk-{m}")
     return Chunk(
         chunk_id=f"{INDUSTRY}-doc-{doc.index}:chunk-{m}",
-        source=doc.rel_path, brand=doc.brand, section=section,
+        source=doc.rel_path, title=doc.title, brand=doc.brand, section=section,
         document_type=doc.document_type, text=f"# {doc.title}\n\n{body}", word_count=words,
     )
 
@@ -464,9 +465,16 @@ def write_collection(
         ids=[c.chunk_id for c in chunks],
         documents=[c.text for c in chunks],
         embeddings=vectors,
-        metadatas=[{"source": c.source, "brand": c.brand, "section": c.section,
-                    "chunk_id": c.chunk_id, "document_type": c.document_type,
-                    "word_count": c.word_count} for c in chunks],
+        metadatas=[{
+            "source": c.title,
+            "source_path": c.source,
+            "title": c.title,
+            "brand": c.brand,
+            "section": c.section,
+            "chunk_id": c.chunk_id,
+            "document_type": c.document_type,
+            "word_count": c.word_count,
+        } for c in chunks],
     )
     written = collection.count()
     if written != len(chunks):
