@@ -364,6 +364,232 @@ class RetailRecords:
                 "query": query_meta,
             }
 
+    def create_return(
+        self,
+        *,
+        order_id: str,
+        line_item_id: str,
+        reason: str,
+        condition: str = "opened_unused",
+        customer_id: str | None = None,
+        request_date: str = "2026-08-18",
+    ) -> dict[str, Any]:
+        """Create a return record in SQLite within an atomic transaction.
+
+        Validates:
+        1. Required fields: order_id, line_item_id, reason must be non-empty.
+        2. Valid ENUM checks: reason, condition.
+        3. Order existence.
+        4. Customer ownership match (if provided).
+        5. Line item existence & order linkage.
+        6. Line item fulfillment status (must be 'delivered' or 'shipped', not 'pending'/'cancelled').
+        7. Idempotency vs Duplicate check:
+           - Exact same request parameters -> returns existing record idempotently.
+           - Different request on already-returned item -> rejects with item_already_returned.
+        8. Atomic insert into returns + update line_items.status = 'returned'.
+        """
+        self._ensure_db()
+
+        # 1. Missing required fields check
+        missing: list[str] = []
+        if not order_id:
+            missing.append("order_id")
+        if not line_item_id:
+            missing.append("line_item_id")
+        if not reason:
+            missing.append("reason")
+        if missing:
+            return {
+                "ok": False,
+                "error": "missing_required_fields",
+                "message": f"Missing required parameters for return creation: {', '.join(missing)}",
+                "missing_fields": missing,
+                "retryable": False,
+            }
+
+        valid_reasons = {"damaged", "defective", "wrong_item", "unwanted", "not_as_described", "late_delivery"}
+        if reason.lower() not in valid_reasons:
+            return {
+                "ok": False,
+                "error": "invalid_reason",
+                "message": f"Invalid return reason {reason!r}. Must be one of {sorted(valid_reasons)}",
+                "retryable": False,
+            }
+
+        valid_conditions = {"unopened", "opened_unused", "used", "damaged"}
+        if condition.lower() not in valid_conditions:
+            return {
+                "ok": False,
+                "error": "invalid_condition",
+                "message": f"Invalid item condition {condition!r}. Must be one of {sorted(valid_conditions)}",
+                "retryable": False,
+            }
+
+        conn = get_connection(self.db_path)
+        try:
+            with conn:
+                # 2. Order existence check
+                order_row = conn.execute(
+                    "SELECT order_id, customer_id, brand, status, order_date FROM orders WHERE order_id = ?",
+                    (order_id,),
+                ).fetchone()
+                if not order_row:
+                    return {
+                        "ok": False,
+                        "error": "order_not_found",
+                        "message": f"Order {order_id!r} does not exist in operational records.",
+                        "retryable": False,
+                    }
+
+                order_customer_id = order_row["customer_id"]
+                brand = order_row["brand"]
+
+                # 3. Customer ownership check (if provided)
+                if customer_id and customer_id != order_customer_id:
+                    return {
+                        "ok": False,
+                        "error": "customer_order_mismatch",
+                        "message": f"Order {order_id!r} belongs to customer {order_customer_id!r}, not {customer_id!r}.",
+                        "retryable": False,
+                    }
+
+                actual_customer_id = customer_id or order_customer_id
+
+                # 4. Line item existence & linkage check
+                item_row = conn.execute(
+                    "SELECT line_item_id, order_id, product_name, category, unit_price, quantity, total_price, status "
+                    "FROM line_items WHERE line_item_id = ?",
+                    (line_item_id,),
+                ).fetchone()
+                if not item_row:
+                    return {
+                        "ok": False,
+                        "error": "item_not_found",
+                        "message": f"Line item {line_item_id!r} does not exist.",
+                        "retryable": False,
+                    }
+
+                if item_row["order_id"] != order_id:
+                    return {
+                        "ok": False,
+                        "error": "item_not_in_order",
+                        "message": f"Line item {line_item_id!r} does not belong to order {order_id!r}.",
+                        "retryable": False,
+                    }
+
+                # 5. Line item fulfillment status check
+                item_status = item_row["status"]
+                if item_status in ("pending", "cancelled"):
+                    return {
+                        "ok": False,
+                        "error": "item_not_fulfilled",
+                        "message": f"Line item {line_item_id!r} is currently {item_status!r} and cannot be returned.",
+                        "retryable": False,
+                    }
+
+                # 6. Duplicate check vs Idempotency
+                existing_return = conn.execute(
+                    "SELECT return_id, order_id, line_item_id, customer_id, rma_code, reason, status, refund_amount "
+                    "FROM returns WHERE line_item_id = ? AND status != 'rejected'",
+                    (line_item_id,),
+                ).fetchone()
+
+                if existing_return:
+                    # Idempotent replay: exact same return parameters
+                    if (
+                        existing_return["order_id"] == order_id
+                        and existing_return["reason"].lower() == reason.lower()
+                    ):
+                        return {
+                            "ok": True,
+                            "status": "existing",
+                            "return_id": existing_return["return_id"],
+                            "rma_code": existing_return["rma_code"],
+                            "refund_amount": float(existing_return["refund_amount"]),
+                            "return_status": existing_return["status"],
+                            "product_name": item_row["product_name"],
+                            "message": f"Return {existing_return['return_id']} already exists for {item_row['product_name']}.",
+                        }
+                    else:
+                        # Conflicting / duplicate return on already-returned item
+                        return {
+                            "ok": False,
+                            "error": "item_already_returned",
+                            "message": f"Line item {line_item_id!r} ({item_row['product_name']}) has already been returned under {existing_return['return_id']}.",
+                            "existing_return_id": existing_return["return_id"],
+                            "existing_rma": existing_return["rma_code"],
+                            "existing_status": existing_return["status"],
+                            "retryable": False,
+                        }
+
+                # 7. Generate Next Return ID & RMA Code transactionally
+                max_ret = conn.execute(
+                    "SELECT return_id FROM returns WHERE return_id LIKE 'RET-%' ORDER BY LENGTH(return_id) DESC, return_id DESC LIMIT 1"
+                ).fetchone()
+                if max_ret and max_ret[0]:
+                    try:
+                        last_num = int(max_ret[0].split("-")[1])
+                        next_num = last_num + 1
+                    except (IndexError, ValueError):
+                        next_num = 703
+                else:
+                    next_num = 703
+
+                return_id = f"RET-{next_num:03d}"
+                brand_map = {"amazon": "AMZ", "bestbuy": "BBY", "target": "TGT", "ikea": "IKA"}
+                brand_code = brand_map.get(brand.lower(), brand[:3].upper())
+                order_suffix = order_id.split("-")[-1] if "-" in order_id else order_id[-4:]
+                rma_code = f"RMA-{brand_code}-{next_num:03d}-{order_suffix}"
+
+                # Calculate refund & restocking fee
+                unit_price = float(item_row["unit_price"])
+                qty = int(item_row["quantity"])
+                gross_amount = round(unit_price * qty, 2)
+
+                restocking_fee = 45.0 if (brand == "bestbuy" and item_row["category"] == "cellular") else 0.0
+                refund_amount = round(max(0.0, gross_amount - restocking_fee), 2)
+
+                # 8. Atomic Insert & Line Item Update
+                conn.execute(
+                    "INSERT INTO returns (return_id, order_id, line_item_id, customer_id, rma_code, request_date, reason, condition, status, refund_amount, restocking_fee) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'requested', ?, ?)",
+                    (
+                        return_id,
+                        order_id,
+                        line_item_id,
+                        actual_customer_id,
+                        rma_code,
+                        request_date,
+                        reason.lower(),
+                        condition.lower(),
+                        refund_amount,
+                        restocking_fee,
+                    ),
+                )
+
+                conn.execute(
+                    "UPDATE line_items SET status = 'returned' WHERE line_item_id = ?",
+                    (line_item_id,),
+                )
+
+                return {
+                    "ok": True,
+                    "status": "created",
+                    "return_id": return_id,
+                    "rma_code": rma_code,
+                    "order_id": order_id,
+                    "line_item_id": line_item_id,
+                    "product_name": item_row["product_name"],
+                    "customer_id": actual_customer_id,
+                    "refund_amount": refund_amount,
+                    "restocking_fee": restocking_fee,
+                    "return_status": "requested",
+                    "request_date": request_date,
+                    "message": f"Successfully created return {return_id} (RMA: {rma_code}) for {item_row['product_name']}.",
+                }
+        finally:
+            conn.close()
+
 
 def get_retail_schema() -> dict[str, Any]:
     """Return the semantic schema description for the kb://retail/schema resource."""
@@ -459,6 +685,7 @@ def get_retail_schema() -> dict[str, Any]:
             "kb_retail_query_orders",
             "kb_retail_query_shipments",
             "kb_retail_query_returns",
-            "kb_retail_query_customer"
+            "kb_retail_query_customer",
+            "kb_retail_create_return"
         ]
     }

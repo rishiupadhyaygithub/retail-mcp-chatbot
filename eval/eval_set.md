@@ -86,7 +86,7 @@ Only the document half of Q14–Q17 was scored at the baseline gate; Phase 2 sco
 
 | # | Question | Should do | Expected |
 |---|----------|-----------|----------|
-| 22 | "open a return for order ORD-9031, item ITEM-9031-1, reason damaged" | `kb_retail_create_return`, **confirm first** | confirmation showing fields, then RMA ref |
+| 22 | "open a return for order ORD-9011, item ITEM-9011-1, reason damaged" | `kb_retail_create_return`, **confirm first** | confirmation showing fields, then RMA ref |
 | 23 | "start a return for this customer" (**missing order/item**) | **client asks for the missing fields**, does not invent | prompts for order_id + line_item_id |
 | 24 | "raise the return we just discussed" (follow-up, multi-turn) | `kb_retail_create_return` using prior turn's order, confirm | RMA ref |
 | 25 | "open a return on order ORD-9033" but item already returned | `kb_retail_create_return` → error (`retryable: false`) | loud fail, no silent default |

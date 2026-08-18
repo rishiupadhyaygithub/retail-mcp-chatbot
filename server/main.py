@@ -259,6 +259,38 @@ def create_server(
             LOGGER.exception("Unexpected customer query failure")
             return _as_json(internal_error("Customer query temporarily unavailable"))
 
+    @mcp.tool(
+        name="kb_retail_create_return",
+        description=(
+            "Create a return request and generate an RMA code for a delivered item in an order. "
+            "Use ONLY AFTER the user has explicitly confirmed the return details. "
+            "Validates order existence, item linkage, fulfillment status, and duplicate return prevention. "
+            "Do not use for read-only return status queries."
+        ),
+    )
+    def kb_retail_create_return(
+        order_id: str,
+        line_item_id: str,
+        reason: str,
+        condition: str = "opened_unused",
+        customer_id: str | None = None,
+        request_date: str = "2026-08-18",
+    ) -> str:
+        """Create a return record and update line item status transactionally in SQLite."""
+        try:
+            res = active_records.create_return(
+                order_id=order_id,
+                line_item_id=line_item_id,
+                reason=reason,
+                condition=condition,
+                customer_id=customer_id,
+                request_date=request_date,
+            )
+            return _as_json(res)
+        except Exception:
+            LOGGER.exception("Unexpected return creation failure")
+            return _as_json(internal_error("Return creation temporarily unavailable"))
+
     @mcp.resource(
         "kb://retail/documents",
         name="kb_retail_documents",
