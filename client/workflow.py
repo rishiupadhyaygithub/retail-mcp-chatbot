@@ -98,9 +98,13 @@ class ConversationalWorkflow:
 
     def _is_return_request(self, text: str) -> bool:
         lowered = text.lower()
-        triggers = ["return", "refund", "send back", "rma"]
-        actions = ["open", "start", "create", "raise", "process", "make", "want to return", "like to return"]
-        return any(t in lowered for t in triggers) and any(a in lowered for a in actions)
+        action_phrases = [
+            "open a return", "start a return", "create a return", "raise a return",
+            "process a return", "make a return", "want to return", "like to return",
+            "i want to return", "i would like to return", "please return", "initiate a return",
+            "open return", "start return", "create return", "raise return"
+        ]
+        return any(phrase in lowered for phrase in action_phrases)
 
     def _extract_order_and_item(self, text: str) -> tuple[str | None, str | None, str | None]:
         order_match = re.search(r"\b(ORD-\d+)\b", text, re.IGNORECASE)
@@ -317,7 +321,7 @@ class ConversationalWorkflow:
             reply = "I don't know — no relevant retail policy documents were found."
         else:
             top = search_res.results[0]
-            reply = f"{top.content}\n\n[retail: {top.document_id}]"
+            reply = f"{top.content}\n\n[retail: {top.source}]"
 
         self.history.append(WorkflowMessage(role="assistant", content=reply))
         return reply
