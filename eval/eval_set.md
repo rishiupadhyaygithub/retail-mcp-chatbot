@@ -55,27 +55,23 @@ Phrased the way an agent asks mid-call. Each records what *should* happen.
 
 | # | Question | Should do | Expected |
 |---|----------|-----------|----------|
-| 8 | "status of order [REF]?" | query_orders | that order's status |
-| 9 | "did order [REF] actually ship?" | query_shipments | shipment row |
-| 10 | "list this customer's open returns" | query_returns (filtered) | filtered list |
-| 11 | "how many orders has [customer] placed this year?" | query (**aggregate/count**) | correct count |
-| 12 | "**how much has this customer been refunded this year?**" | query (**aggregate/sum**) | correct total |
-| 13 | "which line items in order [REF] were delivered?" | query_line_items (filtered) | filtered rows |
+| 8 | "status of order ORD-9021?" | `kb_retail_query_orders` | order `ORD-9021` status = `partially_shipped`, brand `target`, total `$85.49` |
+| 9 | "did order ORD-9021 actually ship?" | `kb_retail_query_shipments` | 2 shipments: `SHIP-402` (`delivered`, carrier USPS) + `SHIP-403` (`in_transit`, carrier USPS) |
+| 10 | "list open returns for customer CUST-103" | `kb_retail_query_returns` (filtered `refund_processing`) | `RET-701` for `ORD-9031`, item `ITEM-9031-1`, status `refund_processing`, amount `$89.50` |
+| 11 | "how many orders has Alex Rivera (CUST-101) placed this year?" | `kb_retail_query_customer` | count = 2 orders (`ORD-9011`, `ORD-9012`), total spent `$259.98` |
+| 12 | "**how much has Marcus Vance (CUST-103) been refunded this year?**" | `kb_retail_query_customer` | completed refund total = `$60.48` (`RET-702`), pending refund = `$89.50` (`RET-701`) |
+| 13 | "which line items in order ORD-9021 were delivered?" | `kb_retail_query_shipments` / `query_orders` | delivered item: `ITEM-9021-1` (Ninja Blender); in-transit item: `ITEM-9021-2` (Brita Pitcher) |
 
 ### Composite (4) — need documents AND records in one answer
 
 | # | Question | Should do | Expected |
 |---|----------|-----------|----------|
-| 14 | "**I was charged twice — is that allowed and did it actually happen?**" | search (payments policy) + query (duplicate charge) | policy + the duplicate-charge row; document half = `amazon/charged_twice.md` |
-| 15 | "can they return order [REF] — what's the window and is it eligible?" | query_orders + search (returns policy) | order date + policy → eligible/not; document half = `amazon/returns.md`, `bestbuy/returns.md`, `target/returns.md`, `ikea/returns.md` |
-| 16 | "parcel split into two — is partial delivery covered, and what shipped?" | search (delivery policy) + query_shipments | policy + partial-shipment rows; document half = `amazon/charged_twice.md`, `amazon/delivery.md` |
-| 17 | "refund on [REF] — how long should it take and did it go through?" | search + query_returns | policy window + return status; document half = `amazon/refund_timelines.md`, `target/returns.md`, `bestbuy/returns.md` |
+| 14 | "**I was charged twice — is that allowed and did it actually happen?**" (CUST-101 / ORD-9011) | `kb_retail_search` + `kb_retail_query_orders` | policy (`amazon/charged_twice.md`) + record: `ORD-9011` captured ($129.99) vs `ORD-9012` auth hold ($129.99 pending release) |
+| 15 | "can they return order ORD-9031 — what's the window and is it eligible?" | `kb_retail_query_orders` + `kb_retail_search` | record: `ORD-9031` placed on `2026-08-06` (12d old, brand `amazon`) + policy (`amazon/returns.md` 30d) → **Eligible** |
+| 16 | "parcel for ORD-9021 split into two — is partial delivery covered, and what shipped?" | `kb_retail_search` + `kb_retail_query_shipments` | policy (`amazon/charged_twice.md`, `amazon/delivery.md`) + records: `SHIP-402` (Blender, delivered) & `SHIP-403` (Brita Pitcher, in transit) |
+| 17 | "refund on return RET-701 (order ORD-9031) — how long should it take and did it go through?" | `kb_retail_search` + `kb_retail_query_returns` | policy (`amazon/refund_timelines.md` 3-5d) + record: `RET-701` status `refund_processing` (refund pending, not yet completed) |
 
-**Only the document half of Q14–Q17 is scored at the baseline gate**; the record half waits for phase 2. Three corpus gaps found while pinning these, worth quoting in the scorecard commentary rather than papering over:
-
-1. **Q16 has no dedicated partial-delivery document.** The only explicit split-shipment language in the corpus sits inside `amazon/charged_twice.md`, which is typed `payments` — so a correct retrieval for a *delivery* question has to surface a payments chunk. Expect this to look like a routing failure when it is really a corpus gap.
-2. **Q6's "who pays return shipping" half is only weakly covered.** The corpus says prepaid/printable return labels exist (Amazon, Target) but no document states outright who bears the cost. `bestbuy/delivery.md` is included as the nearest genuine shipping-cost passage ($35 free-shipping threshold), though it covers outbound, not return, shipping.
-3. **Q14 has a single-point-of-failure expected set** — one document, so Recall@5 on Q14 is effectively a test of one chunk. Related: there is no `amazon/payments.md` at all; Amazon's payments coverage is two special-case documents. No question in this set asks "what payment methods does Amazon accept?", and none should until the gap is filled — it would score as a retrieval miss when the honest answer is missing corpus.
+Only the document half of Q14–Q17 was scored at the baseline gate; Phase 2 scores both document and structured record halves.
 
 ### Cross-server (4) — ≥2 need another industry, ≥1 comparative across two at once
 
@@ -90,10 +86,10 @@ Phrased the way an agent asks mid-call. Each records what *should* happen.
 
 | # | Question | Should do | Expected |
 |---|----------|-----------|----------|
-| 22 | "open a return for order [REF], item [ITEM], reason damaged" | `kb_retail_create_return`, **confirm first** | confirmation showing fields, then RMA ref |
+| 22 | "open a return for order ORD-9031, item ITEM-9031-1, reason damaged" | `kb_retail_create_return`, **confirm first** | confirmation showing fields, then RMA ref |
 | 23 | "start a return for this customer" (**missing order/item**) | **client asks for the missing fields**, does not invent | prompts for order_id + line_item_id |
 | 24 | "raise the return we just discussed" (follow-up, multi-turn) | `kb_retail_create_return` using prior turn's order, confirm | RMA ref |
-| 25 | "open a return on order [REF]" but item already returned | `kb_retail_create_return` → error (`retryable: false`) | loud fail, no silent default |
+| 25 | "open a return on order ORD-9033" but item already returned | `kb_retail_create_return` → error (`retryable: false`) | loud fail, no silent default |
 
 ### Unanswerable (3) — retrieval should fail, system should refuse
 
@@ -101,7 +97,7 @@ Phrased the way an agent asks mid-call. Each records what *should* happen.
 |---|----------|-----------|----------|
 | 26 | "what's the CEO's mobile number?" | **refuse** | not in data |
 | 27 | "will this product be cheaper next month?" | **refuse** | can't predict |
-| 28 | "status of order 99999999?" (**no such order**) | query → empty → **refuse honestly** | zero rows, not invented |
+| 28 | "status of order ORD-99999999?" (**no such order**) | `kb_retail_query_orders` → `{"results": [], "total_found": 0}` → **refuse honestly** | zero rows, not invented |
 
 *(28 questions — inside 25–30.)*
 

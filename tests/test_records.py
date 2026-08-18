@@ -90,3 +90,28 @@ def test_get_retail_schema_resource():
     assert schema["resource"] == "kb://retail/schema"
     assert set(schema["tables"].keys()) == {"customers", "orders", "line_items", "shipments", "returns"}
     assert "supported_tools" in schema
+
+
+def test_records_negative_behavior_and_structured_empty():
+    records = RetailRecords()
+
+    # Unknown orders
+    assert records.query_orders(order_id="ORD-NONEXISTENT")["total_found"] == 0
+    assert records.query_orders(order_id="ORD-NONEXISTENT")["results"] == []
+    assert records.query_orders(customer_id="CUST-NONEXISTENT")["total_found"] == 0
+    assert records.query_orders(brand="nonexistent_brand")["total_found"] == 0
+
+    # Unknown shipments
+    assert records.query_shipments(order_id="ORD-NONEXISTENT")["total_found"] == 0
+    assert records.query_shipments(tracking_number="TRACK-99999999")["total_found"] == 0
+    assert records.query_shipments(shipment_id="SHIP-999")["total_found"] == 0
+
+    # Unknown returns
+    assert records.query_returns(customer_id="CUST-NONEXISTENT")["total_found"] == 0
+    assert records.query_returns(return_id="RET-999")["total_found"] == 0
+    assert records.query_returns(rma_code="RMA-FAKE")["total_found"] == 0
+    assert records.query_returns(status="nonexistent_status")["total_found"] == 0
+
+    # Unknown customer
+    assert records.query_customer(customer_id="CUST-NONEXISTENT")["total_found"] == 0
+    assert records.query_customer(email="nobody@fake.com")["total_found"] == 0

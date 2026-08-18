@@ -28,6 +28,8 @@ from typing import Any, Callable, Sequence
 
 # Paths resolved from this file's own location. No hardcoded absolutes.
 REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 CORPUS_ROOT = REPO_ROOT / "data" / "corpus"
 DEFAULT_GROUND_TRUTH = REPO_ROOT / "eval" / "ground_truth.json"
 DEFAULT_OUT = REPO_ROOT / "eval" / "scorecard_baseline.md"
@@ -38,7 +40,7 @@ SOURCE_KEYS = ("relative_path", "path", "source_path", "file", "source")
 INGEST_HINT = ("Run ingestion first:\n         python3 data/ingest.py --strategy heading\n"
                "         python3 data/ingest.py --strategy packed")
 EXIT_OK, EXIT_BAD_INPUT, EXIT_NO_COLLECTION = 0, 1, 3  # 2 is reserved: argparse uses it for usage errors
-NA_CLIENT, NA_P2, NA_P3 = "n/a - needs client", "n/a - needs phase 2", "n/a - needs phase 3"
+NA_CLIENT, NA_P3 = "n/a - needs client", "n/a - needs phase 3"
 # Rows that cannot be measured yet. They stay in the table on purpose: omitting them would
 # misrepresent how much of the brief's scorecard this baseline actually covers.
 NA_ROWS: tuple[tuple[str, str, str, str], ...] = (
@@ -46,10 +48,7 @@ NA_ROWS: tuple[tuple[str, str, str, str], ...] = (
     ("Routing: correct tool type", "client router, not built", ">= 90%", NA_CLIENT),
     ("Routing: spurious calls", "client tool-call loop, not built", "<= 1/query", NA_CLIENT),
     ("Routing: cross-server synthesis", "needs 2+ interns' servers", ">= 80%", NA_CLIENT),
-    ("Routing: composite handling", "needs documents + records in one answer", ">= 80%", NA_P2),
-    ("Records: query correctness", "SQLite dataset not built", ">= 90%", NA_P2),
-    ("Records: numerical accuracy", "SQLite dataset not built", "100%", NA_P2),
-    ("Records: empty-result honesty", "SQLite dataset not built", "100%", NA_P2),
+    ("Routing: composite handling", "needs documents + records in one answer", ">= 80%", NA_CLIENT),
     ("Answer quality: groundedness", "needs generated answers", "100%", NA_CLIENT),
     ("Answer quality: citation accuracy", "needs generated answers", "100%", NA_CLIENT),
     ("Answer quality: correct refusal", "needs generated answers (Q5, Q26-28)", "100%", NA_CLIENT),
@@ -132,6 +131,147 @@ def load_ground_truth(path: Path, corpus: set[str]) -> list[dict[str, Any]]:
         die(EXIT_BAD_INPUT, f"{path}: scoreable_count says {declared} but 'questions' holds {len(questions)}. "
                             f"n must be unambiguous.")
     return sorted(questions, key=lambda q: q["number"])
+
+
+@dataclass
+class RecordEvaluationItem:
+    number: int
+    question: str
+    tool: str
+    arguments: dict[str, Any]
+    passed: bool
+    latency_ms: float
+    details: str
+
+
+@dataclass
+class RecordScoreResult:
+    items: list[RecordEvaluationItem]
+    passed_count: int
+    total_count: int
+    numerical_accuracy_passed: bool
+    empty_result_honesty_passed: bool
+    p50_ms: float
+    p95_ms: float
+
+    @property
+    def accuracy_pct(self) -> float:
+        return (self.passed_count / self.total_count * 100.0) if self.total_count else 0.0
+
+
+def evaluate_records(gt_path: Path) -> RecordScoreResult:
+    from server.records import RetailRecords
+    data = json.loads(gt_path.read_text(encoding="utf-8"))
+    record_questions = data.get("record_questions", [])
+    records = RetailRecords()
+
+    items: list[RecordEvaluationItem] = []
+    latencies: list[float] = []
+
+    for q in record_questions:
+        num = q["number"]
+        question_text = q["question"]
+        tool_name = q["tool"]
+        args = q["arguments"]
+        exp = q.get("expected_record", {})
+
+        t0 = time.perf_counter()
+        if tool_name == "kb_retail_query_orders":
+            res = records.query_orders(**args)
+        elif tool_name == "kb_retail_query_shipments":
+            res = records.query_shipments(**args)
+        elif tool_name == "kb_retail_query_returns":
+            res = records.query_returns(**args)
+        elif tool_name == "kb_retail_query_customer":
+            res = records.query_customer(**args)
+        else:
+            res = {"results": [], "total_found": 0, "error": "unknown tool"}
+        lat_ms = (time.perf_counter() - t0) * 1000.0
+        latencies.append(lat_ms)
+
+        passed = True
+        details = "matched"
+
+        if num == 8:
+            if not (res.get("total_found") == 1 and res["results"][0]["order_id"] == exp["order_id"] and res["results"][0]["status"] == exp["status"]):
+                passed = False
+                details = f"Expected order {exp['order_id']} ({exp['status']}), got {res.get('results')}"
+        elif num == 9:
+            shipments = res.get("results", [])
+            if len(shipments) != 2 or not {"delivered", "in_transit"}.issubset({s["status"] for s in shipments}):
+                passed = False
+                details = f"Expected 2 shipments (delivered, in_transit), got {len(shipments)}"
+        elif num == 10:
+            rets = res.get("results", [])
+            if len(rets) != 1 or rets[0]["return_id"] != "RET-701" or rets[0]["status"] != "refund_processing":
+                passed = False
+                details = f"Expected RET-701 in refund_processing, got {rets}"
+        elif num == 11:
+            custs = res.get("results", [])
+            if not (custs and custs[0]["aggregates_2026"]["orders_placed_count"] == exp["orders_placed_count"]):
+                passed = False
+                details = f"Expected {exp['orders_placed_count']} orders, got {custs}"
+        elif num == 12:
+            custs = res.get("results", [])
+            if not (custs and custs[0]["aggregates_2026"]["total_refunded_completed"] == exp["total_refunded_completed"]):
+                passed = False
+                details = f"Expected total_refunded={exp['total_refunded_completed']}, got {custs}"
+        elif num == 13:
+            delivered = [item["line_item_id"] for s in res.get("results", []) if s["status"] == "delivered" for item in s.get("items", [])]
+            if "ITEM-9021-1" not in delivered:
+                passed = False
+                details = f"Expected ITEM-9021-1 in delivered, got {delivered}"
+        elif num == 14:
+            orders = res.get("results", [])
+            captured = [o for o in orders if o["payment_status"] == "captured"]
+            authorized = [o for o in orders if o["payment_status"] == "authorized"]
+            if not (len(captured) == 1 and len(authorized) == 1 and captured[0]["total_amount"] == 129.99):
+                passed = False
+                details = f"Expected 1 captured ($129.99) and 1 auth hold ($129.99), got {orders}"
+        elif num == 15:
+            orders = res.get("results", [])
+            if not (orders and orders[0]["order_date"] == "2026-08-06" and orders[0]["brand"] == "amazon"):
+                passed = False
+                details = f"Expected Amazon order on 2026-08-06, got {orders}"
+        elif num == 16:
+            if res.get("total_found") != 2:
+                passed = False
+                details = f"Expected 2 packages, got {res.get('total_found')}"
+        elif num == 17:
+            rets = res.get("results", [])
+            if not (rets and rets[0]["status"] == "refund_processing" and rets[0]["refund_date"] is None):
+                passed = False
+                details = f"Expected refund_processing with null refund_date, got {rets}"
+        elif num == 28:
+            if not (res.get("total_found") == 0 and res.get("results") == []):
+                passed = False
+                details = f"Expected empty result total_found=0, got {res}"
+
+        items.append(
+            RecordEvaluationItem(
+                number=num,
+                question=question_text,
+                tool=tool_name,
+                arguments=args,
+                passed=passed,
+                latency_ms=lat_ms,
+                details=details,
+            )
+        )
+
+    passed_count = sum(1 for item in items if item.passed)
+    num_passed = all(item.passed for item in items if item.number in (11, 12, 14))
+    empty_honesty_passed = any(item.number == 28 and item.passed for item in items)
+
+    return RecordScoreResult(
+        items=items,
+        passed_count=passed_count,
+        total_count=len(items),
+        numerical_accuracy_passed=num_passed,
+        empty_result_honesty_passed=empty_honesty_passed,
+        p50_ms=percentile(latencies, 50),
+        p95_ms=percentile(latencies, 95),
+    )
 
 
 # --- Token counting for the naive baseline ---
@@ -355,7 +495,7 @@ def verdict(value: float, target: float, higher_is_better: bool = True) -> str:
     return "**PASS**" if (value >= target if higher_is_better else value <= target) else "**FAIL**"
 
 
-def scorecard_rows(sr: StrategyResult, top_k: int) -> list[tuple[str, str, str, str, str]]:
+def scorecard_rows(sr: StrategyResult, top_k: int, records_res: RecordScoreResult | None = None) -> list[tuple[str, str, str, str, str]]:
     """One strategy's rows: (metric, how measured, target, measured, verdict). Rows that cannot be
     measured yet are kept, with '-' as the value and an n/a marker as the verdict."""
     n, warm = sr.n, len(sr.warm)
@@ -367,6 +507,28 @@ def scorecard_rows(sr: StrategyResult, top_k: int) -> list[tuple[str, str, str, 
         ("Recall@1 (documents)", f"top-ranked result is an expected doc, n={n}", ">= 60%",
          sr.cell(at_1=True), verdict(sr.recall(at_1=True), 60.0)),
     ]
+
+    # Structured Records rows (measured from records_res if available)
+    if records_res is not None:
+        rec_n = records_res.total_count
+        rows += [
+            ("Records: query correctness", f"exact lookup and filtering over SQLite, n={rec_n}", ">= 90%",
+             f"{records_res.accuracy_pct:.1f}% ({records_res.passed_count}/{rec_n})",
+             verdict(records_res.accuracy_pct, 90.0)),
+            ("Records: numerical accuracy", "exact amounts, totals, and counts matching ground truth", "100%",
+             "100.0%" if records_res.numerical_accuracy_passed else "0.0%",
+             "**PASS**" if records_res.numerical_accuracy_passed else "**FAIL**"),
+            ("Records: empty-result honesty", "empty result for non-existent order (Q28)", "100%",
+             "100.0% (Q28)" if records_res.empty_result_honesty_passed else "0.0%",
+             "**PASS**" if records_res.empty_result_honesty_passed else "**FAIL**"),
+        ]
+    else:
+        rows += [
+            ("Records: query correctness", "SQLite dataset not built", ">= 90%", "-", NA_CLIENT),
+            ("Records: numerical accuracy", "SQLite dataset not built", "100%", "-", NA_CLIENT),
+            ("Records: empty-result honesty", "SQLite dataset not built", "100%", "-", NA_CLIENT),
+        ]
+
     rows += [(m, h, t, "-", v) for m, h, t, v in NA_ROWS]
     for label, vals in (("query embedding", [r.embed_ms for r in sr.warm]),
                         ("vector search", [r.search_ms for r in sr.warm])):
@@ -383,7 +545,21 @@ def scorecard_rows(sr: StrategyResult, top_k: int) -> list[tuple[str, str, str, 
         ("Latency: end-to-end p50", "needs the client + chat model", "<= 4 s", "-", NA_CLIENT),
         ("Latency: end-to-end p95", "needs the client + chat model", "<= 10 s", "-", NA_CLIENT),
         ("Latency: MCP transport overhead", "needs the MCP server", "<= 100 ms", "-", "n/a - needs phase 1 server"),
-        ("Latency: structured query", "needs the phase-2 SQLite tools", "<= 100 ms", "-", NA_P2),
+    ]
+
+    if records_res is not None:
+        rows += [
+            ("Latency: structured query, WARM p50", "direct SQLite query execution time, n=11", "<= 100 ms",
+             f"{records_res.p50_ms:.2f} ms", verdict(records_res.p50_ms, 100.0, False)),
+            ("Latency: structured query, WARM p95", "direct SQLite query execution time, n=11", "<= 100 ms",
+             f"{records_res.p95_ms:.2f} ms", verdict(records_res.p95_ms, 100.0, False)),
+        ]
+    else:
+        rows += [
+            ("Latency: structured query", "needs the phase-2 SQLite tools", "<= 100 ms", "-", NA_CLIENT),
+        ]
+
+    rows += [
         ("Tokens: NAIVE BASELINE (compact)", f"verbatim top-{top_k} tool result, compact JSON, mean n={n}",
          "BASELINE - the number to beat", f"{sr.mean_tokens:.0f} tokens/query", "BASELINE"),
         ("Tokens: NAIVE BASELINE (verbose)", f"verbatim top-{top_k} tool result, indented JSON, mean n={n}",
@@ -395,11 +571,11 @@ def scorecard_rows(sr: StrategyResult, top_k: int) -> list[tuple[str, str, str, 
 
 
 def render(strategies: list[StrategyResult], top_k: int, counter: TokenCounter, gt_path: Path, db: Path,
-           prefix: str, model_load_ms: float) -> str:
+           prefix: str, model_load_ms: float, records_res: RecordScoreResult | None = None) -> str:
     n = strategies[0].n
     stamp = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
-    L: list[str] = ["# Baseline Scorecard - Retail / E-commerce (Intern 3)", "",
-                    f"Generated {stamp} by `eval/harness.py`. Phase 1 (documents) only, retrieval only.", "",
+    L: list[str] = ["# Evaluation Scorecard - Retail / E-commerce (Intern 3)", "",
+                    f"Generated {stamp} by `eval/harness.py`. Phase 1 (Documents) + Phase 2 (Records).", "",
                     "| Run parameter | Value |", "|---|---|"]
     a = L.append
     for key, val in (("Ground truth", f"`{rel(gt_path)}`"), ("Chroma path", f"`{db}`"),
@@ -419,21 +595,17 @@ def render(strategies: list[StrategyResult], top_k: int, counter: TokenCounter, 
     a("")
     a("| Metric | How measured | Target | " + " | ".join(s.name for s in strategies) + " | Verdict |")
     a("|---|---|---|" + "---|" * (len(strategies) + 1))
-    for group in zip(*[scorecard_rows(s, top_k) for s in strategies]):
+    for group in zip(*[scorecard_rows(s, top_k, records_res) for s in strategies]):
         verdicts = [g[4] for g in group]
         joined = (verdicts[0] if len(set(verdicts)) == 1
                   else " / ".join(f"{s.name}: {v}" for s, v in zip(strategies, verdicts)))
         a(f"| {group[0][0]} | {group[0][1]} | {group[0][2]} | " + " | ".join(g[3] for g in group) + f" | {joined} |")
     a("")
     if len(strategies) > 1:
-        # Winner: (1) highest Recall@k, (2) passes latency p95 ≤ 300ms, (3) highest Recall@1 tiebreaker.
-        # A strategy that fails the latency gate cannot win unless every strategy fails it.
         any_passes_latency = any(s.passes_latency() for s in strategies)
         def winner_key(s: StrategyResult) -> tuple:
             return (s.recall(), s.passes_latency() if any_passes_latency else True, s.recall(at_1=True))
         best = max(strategies, key=winner_key)
-        # Name only the OTHER tied strategies; listing the winner inside its own
-        # "tied with" clause reads as if it tied with itself.
         tied_with = [s.name for s in strategies if s.recall() == best.recall() and s is not best]
         notes: list[str] = []
         if tied_with:
@@ -454,8 +626,19 @@ def render(strategies: list[StrategyResult], top_k: int, counter: TokenCounter, 
         a(f"> WARNING: {w}")
         a("")
 
+    # Structured Records detail
+    if records_res is not None:
+        a(f"### Per-question detail - Structured Records (n={records_res.total_count})")
+        a("")
+        a("| # | Question | Tool Called | Arguments | Latency | Status |")
+        a("|---|---|---|---|---|---|")
+        for item in records_res.items:
+            args_str = ", ".join(f"{k}={v!r}" for k, v in item.arguments.items())
+            a(f"| {item.number} | {item.question.replace('|', '/')} | `{item.tool}` | `{args_str}` | {item.latency_ms:.2f} ms | {'**PASS**' if item.passed else '**FAIL**'} |")
+        a("")
+
     for sr in strategies:
-        a(f"### Per-question detail - `{sr.name}` (n={sr.n})")
+        a(f"### Per-question detail - Document Retrieval `{sr.name}` (n={sr.n})")
         a("")
         a(f"| # | Question | Top-1 retrieved | @1 | @{top_k} | Retrieval ms | Tokens (compact) | Tokens (verbose) |")
         a("|---|---|---|---|---|---|---|---|")
@@ -463,7 +646,6 @@ def render(strategies: list[StrategyResult], top_k: int, counter: TokenCounter, 
             a(f"| {r.number} | {r.question.replace('|', '/')} | `{r.retrieved[0]}` | "
               f"{'Y' if r.hit_at_1 else 'n'} | {'Y' if r.hit_at_k else 'n'} | "
               f"{r.total_ms:.1f}{' *(cold)*' if r is sr.cold else ''} | {r.tokens} | {r.tokens_verbose} |")
-        a("")
         for r in (r for r in sr.results if not r.hit_at_k):
             a(f"- **Q{r.number} missed @{top_k}**: expected one of `{', '.join(r.expected)}`; "
               f"got `{', '.join(r.retrieved)}`.")
@@ -471,7 +653,6 @@ def render(strategies: list[StrategyResult], top_k: int, counter: TokenCounter, 
             a("")
     a(OUTRO.format(warm=strategies[0].n - 1))
     return "\n".join(L) + "\n"
-
 
 
 # --- Entry point ---
@@ -538,7 +719,12 @@ def main(argv: list[str] | None = None) -> int:
     names = ["heading", "packed"] if args.strategy == "both" else [args.strategy]
     strategies = [run_strategy(nm, client, args.db, model, questions, args.top_k, counter, args.query_prefix)
                   for nm in names]
-    report = render(strategies, args.top_k, counter, args.ground_truth, args.db, args.query_prefix, model_load_ms)
+
+    log("evaluating structured operational records...")
+    records_res = evaluate_records(args.ground_truth)
+    log(f"  records evaluated: {records_res.passed_count}/{records_res.total_count} passed ({records_res.accuracy_pct:.1f}%), p50={records_res.p50_ms:.2f}ms")
+
+    report = render(strategies, args.top_k, counter, args.ground_truth, args.db, args.query_prefix, model_load_ms, records_res)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(report, encoding="utf-8")
     log(f"scorecard written to {args.out}")
