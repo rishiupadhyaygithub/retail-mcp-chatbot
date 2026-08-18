@@ -30,8 +30,8 @@ import ollama
 
 from mcp_client import MCPFleet, ToolOutcome, load_server_configs
 
-PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "system_prompt_v1.md"
-PROMPT_VERSION = "v1"
+PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "system_prompt_v2.md"
+PROMPT_VERSION = "v2"
 
 # Design doc §5.  Five is enough for a cross-server comparison (one search per
 # server plus a synthesis round) and short enough that a loop costs seconds.
