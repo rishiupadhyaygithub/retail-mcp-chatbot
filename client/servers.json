@@ -26,7 +26,7 @@
       "name": "banking",
       "url": "http://10.10.180.175:8420/mcp",
       "timeout_seconds": 15,
-      "enabled": false
+      "enabled": true
     },
     {
       "name": "telecom",
