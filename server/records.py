@@ -522,18 +522,17 @@ class RetailRecords:
                             "retryable": False,
                         }
 
-                # 7. Generate Next Return ID & RMA Code transactionally
-                max_ret = conn.execute(
-                    "SELECT return_id FROM returns WHERE return_id LIKE 'RET-%' ORDER BY LENGTH(return_id) DESC, return_id DESC LIMIT 1"
-                ).fetchone()
-                if max_ret and max_ret[0]:
-                    try:
-                        last_num = int(max_ret[0].split("-")[1])
-                        next_num = last_num + 1
-                    except (IndexError, ValueError):
-                        next_num = 703
-                else:
-                    next_num = 703
+                # 7. Generate Next Return ID & RMA Code via atomic sequence table
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS return_sequences (name TEXT PRIMARY KEY, current_val INTEGER NOT NULL);"
+                )
+                conn.execute(
+                    "INSERT OR IGNORE INTO return_sequences (name, current_val) "
+                    "VALUES ('returns', (SELECT COALESCE(MAX(CAST(SUBSTR(return_id, 5) AS INTEGER)), 702) FROM returns));"
+                )
+                conn.execute("UPDATE return_sequences SET current_val = current_val + 1 WHERE name = 'returns';")
+                seq_row = conn.execute("SELECT current_val FROM return_sequences WHERE name = 'returns'").fetchone()
+                next_num = int(seq_row[0]) if seq_row else 703
 
                 return_id = f"RET-{next_num:03d}"
                 brand_map = {"amazon": "AMZ", "bestbuy": "BBY", "target": "TGT", "ikea": "IKA"}

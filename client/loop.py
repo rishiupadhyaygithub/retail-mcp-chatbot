@@ -68,7 +68,10 @@ def load_system_prompt(path: Path = PROMPT_PATH) -> str:
 
 def is_write_tool(qualified_name: str) -> bool:
     _, _, tool_name = qualified_name.partition("__")
-    return tool_name.startswith(WRITE_VERBS)
+    bare_name = tool_name or qualified_name
+    if bare_name.startswith("kb_retail_"):
+        bare_name = bare_name[len("kb_retail_"):]
+    return any(bare_name.startswith(v) or v in bare_name for v in WRITE_VERBS)
 
 
 @dataclass
