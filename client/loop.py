@@ -103,6 +103,19 @@ def _tool_message(outcome: ToolOutcome) -> dict[str, str]:
     return {"role": "tool", "content": body, "name": outcome.tool_name}
 
 
+def is_confirmed_by_user(question: str, history: Sequence[dict[str, Any]] | None) -> bool:
+    q = question.strip().lower()
+    confirm_words = ("yes", "confirm", "proceed", "go ahead", "approved", "execute", "sure", "ok", "okay")
+    if any(q.startswith(w) or f" {w} " in f" {q} " or q == w for w in confirm_words):
+        return True
+    if history:
+        for msg in reversed(history):
+            if msg.get("role") == "assistant" and ("confirm" in msg.get("content", "").lower() or "would call" in msg.get("content", "").lower()):
+                if any(w in q for w in confirm_words):
+                    return True
+    return False
+
+
 async def run_turn(
     question: str,
     history: list[dict[str, Any]] | None = None,
@@ -175,20 +188,26 @@ async def run_turn(
                 )
                 return result
 
-            # Writes stop the loop and wait for a human yes (design doc §5).
+            # Writes stop the loop and wait for a human yes (design doc §5), unless confirmed.
             for call in calls:
                 name = call["function"]["name"]
                 if is_write_tool(name):
                     args = call["function"]["arguments"]
                     if isinstance(args, str):
-                        args = json.loads(args)
-                    result.pending_write = {"tool": name, "arguments": args}
-                    result.answer = (
-                        f"This would call `{name}` with "
-                        f"{json.dumps(args, ensure_ascii=False)}. "
-                        "Confirm before I run it."
-                    )
-                    return result
+                        try:
+                            args = json.loads(args)
+                        except Exception:
+                            args = {}
+
+                    if not is_confirmed_by_user(question, history):
+                        result.pending_write = {"tool": name, "arguments": args}
+                        result.answer = (
+                            f"This would call `{name}` with "
+                            f"{json.dumps(args, ensure_ascii=False)}. "
+                            "Please confirm before I execute this action."
+                        )
+                        return result
+                    # Confirmed: allow loop to proceed to execute call below
 
             messages.append(message)
 

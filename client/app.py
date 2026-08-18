@@ -86,12 +86,13 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         question = str(request.get("question", "")).strip()
+        history = request.get("history") or []
         if not question:
             self._send_json(400, {"error": "question is required"})
             return
 
         try:
-            result = asyncio.run(run_turn(question, model=self.model))
+            result = asyncio.run(run_turn(question, history=history, model=self.model))
         except Exception as exc:  # noqa: BLE001 - one bad turn must not kill the UI
             self._send_json(500, {"error": f"{type(exc).__name__}: {exc}"})
             return
