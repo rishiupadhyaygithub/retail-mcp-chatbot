@@ -1,176 +1,178 @@
-# Retail MCP Server + Chatbot Client
+# TOPAZ Retail MCP Server + Multi-Server Chatbot Assistant
 
-Internship project: an **MCP server** for the **Retail** domain, plus a **chatbot client** that connects to all four interns' servers.
+An enterprise-grade **Model Context Protocol (MCP)** server for the **Retail** industry, paired with an intelligent **contact-center orchestrator and web interface** that connects to multi-domain MCP servers (Retail, Banking, Hospitality, Telecom).
 
-> **Core rule:** the server does retrieval + data + actions and **never calls a chat LLM**. The client does all reasoning, tool selection, and text generation.
->
-> **Embedding is retrieval, not generation:** the MCP server runs a **local** embedding model on my host (`BAAI/bge-m3`, off GB10) to turn a query into a vector. The server calls the embedder **directly** — never through the client, and there is **no contact between the chat model and the MCP server** (per manager, 2026-08-11).
-
-## Repo layout
-
-| Path | Contents |
-|------|----------|
-| `docs/` | design document, addendum, retro |
-| `eval/` | eval set, harness, scorecards |
-| `conformance/` | reports on the other three interns' servers |
-| `server/` | MCP server (no LLM) — protocol adapter plus the frozen `retrieval.py` |
-| `client/` | host, client sessions, UI |
-| `data/` | corpus sources list, ingestion scripts, dataset generator |
-| `prompts/` | system prompt, versioned |
-| `contract/` | shared contracts across interns (Contract v1 for MCP, Vector DB contract for Approach 1) |
-
-## Phases
-
-1. **Documents (RAG)** — answer from retail policy docs, with citations.
-2. **Records** — structured queries over catalog / inventory / orders (SQLite).
-3. **Actions** — writes (returns, cancellations) with a confirmation step.
+> **Core Architectural Invariant:** The MCP server handles deterministic data retrieval, SQL queries, and transactional writes and **never calls a chat LLM**. The client orchestrator handles reasoning, multi-turn state tracking, tool selection, human safety confirmation gates, and synthesized text generation.
 
 ---
 
-## Run it from a clean checkout
+## 1. Architecture Overview
 
-> A colleague should be able to clone and run everything from this section alone. *(Commands marked `(to add)` land as each phase is built.)*
+```
+                      ┌─────────────────────────────────────────────────────────┐
+                      │                   DATA STORAGE LAYER                    │
+                      │   Unstructured (ChromaDB)   +   Structured (SQLite DB)  │
+                      └───────────────────────────┬─────────────────────────────┘
+                                                  │
+                      ┌───────────────────────────▼─────────────────────────────┐
+                      │                    MCP SERVER LAYER                     │
+                      │  Retail Server (:8003/mcp)  |  Banking (:8420)  |  ...  │
+                      │  Tools: search, query_orders, shipments, create_return  │
+                      └───────────────────────────┬─────────────────────────────┘
+                                                  │ (Streamable HTTP /mcp)
+                      ┌───────────────────────────▼─────────────────────────────┐
+                      │                MCP FLEET / ROUTER LAYER                 │
+                      │      Parallel Discovery & Graceful Degradation          │
+                      │             (client/mcp_client.py: MCPFleet)            │
+                      └───────────────────────────┬─────────────────────────────┘
+                                                  │
+                      ┌───────────────────────────▼─────────────────────────────┐
+                      │             ORCHESTRATOR & LLM CHAT ENGINE              │
+                      │  - External LLM (Ollama / Qwen / Any OpenAI API)        │
+                      │  - Dual-Provenance Synthesis (client/composite.py)      │
+                      │  - Conversational State Machine (client/workflow.py)    │
+                      │  - Action Confirmation Safety Gates (client/loop.py)    │
+                      └───────────────────────────┬─────────────────────────────┘
+                                                  │ (REST API /api/chat)
+                      ┌───────────────────────────▼─────────────────────────────┐
+                      │               AGENT WEB UI (FRONTEND)                   │
+                      │         http://localhost:8080 (client/app.py)           │
+                      └─────────────────────────────────────────────────────────┘
+```
 
-**Steps 1–5 run entirely on your own machine, offline.** No GB10, no Ollama, no
-other intern's server, no network at all after `pip install`. Everything graded
-at the baseline gate — corpus, retrieval, MCP server, tests, scorecard — is in
-that offline set. **Step 6 is the chat UI**: it needs a chat model, but Ollama
-on this machine is enough. Only step 7 needs the shared GB10 box, and nothing
-above it depends on step 7.
+---
 
-### 1. Prerequisites
+## 2. Repository Layout
 
+| Path | Contents & Description |
+|---|---|
+| **`server/`** | FastMCP server implementation (`main.py`), SQLite data access layer (`records.py`), and Chroma retrieval (`retrieval.py`). Exposes 6 tools and 2 resources. |
+| **`client/`** | MCP client fleet (`mcp_client.py`), LLM tool-calling loop (`loop.py`), multi-turn workflow state machine (`workflow.py`), composite reasoner (`composite.py`), web server (`app.py`), and frontend SPA (`ui/index.html`). |
+| **`data/`** | Policy corpus (24 markdown docs across Amazon, Best Buy, Target, IKEA), ingestion scripts (`ingest.py`), SQLite schema (`schema.sql`), and deterministic dataset seeder (`seed_records.py`). |
+| **`docs/`** | Main design document (`design_document.md`), Phase 2/3 design addendum (`design_addendum.md`), and architecture references. |
+| **`eval/`** | Ground truth dataset (`ground_truth.json`), 28 evaluation benchmark questions (`eval_set.md`), and automated evaluation harness (`harness.py`). |
+| **`conformance/`** | Interop conformance reports on teammate servers (`banking_server_report.md`). |
+| **`prompts/`** | Versioned system prompts (`system_prompt_v1.md`, `system_prompt_v2.md`). |
+| **`contract/`** | Shared interface agreements (`contract_v1.md`, `vector_db_contract.md`). |
+| **`tests/`** | Complete 48-test pytest verification suite across unit, integration, protocol, concurrency, and safety gates. |
+| **`scripts/`** | End-to-end product audit script (`e2e_demo_audit.py`). |
+
+---
+
+## 3. The Three Implementation Phases
+
+### Phase 1: Unstructured Knowledge Retrieval (RAG)
+* **Corpus & Chunking:** 24 markdown files chunked via heading and packed strategies.
+* **Vector Store:** ChromaDB running on port `8100` with dense `BAAI/bge-m3` 1024-d embeddings.
+* **Tool:** `kb_retail_search(query, top_k)` returning relevance-scored passages with document source and section metadata.
+* **Performance:** 100% Recall@5, 100% Recall@1 on heading strategy.
+
+### Phase 2: Structured Operational Records
+* **Relational Schema:** 5 normalized tables in SQLite (`customers`, `orders`, `line_items`, `shipments`, `returns`) seeded deterministically.
+* **Parameterized Tools:**
+  * `kb_retail_query_orders`: Order lookup by ID, customer, brand, status, or date range.
+  * `kb_retail_query_shipments`: Carrier tracking, delivery timestamps, and split-shipment packages.
+  * `kb_retail_query_returns`: RMA tracking, return reasons, condition, and refund status.
+  * `kb_retail_query_customer`: Customer profile and 2026 financial summary aggregates.
+* **Composite Reasoning:** `CompositeReasoner` synthesizes SQLite operational state with Chroma policy rules (e.g. Q15 return eligibility, Q14 duplicate charges vs auth holds).
+
+### Phase 3: State-Changing Actions & Safety Gates
+* **Action Tool:** `kb_retail_create_return(order_id, line_item_id, reason, customer_id, condition)` returning atomic RMA codes (`RMA-AMZ-704-9011`).
+* **Safety Invariants:**
+  * **Zero Unattended Writes:** The LLM can never write to SQLite without human confirmation.
+  * **8 Pre-Flight Validation Gates:** Enforces order existence, item linkage, customer matching, delivered fulfillment status, duplicate return prevention, and idempotent replay.
+  * **Concurrency-Safe Sequence Generation:** Atomic sequence table (`return_sequences`) inside `BEGIN IMMEDIATE` transactions.
+  * **Honest Missing-Field Clarification:** Missing parameters prompt the user without hallucinating (Q23).
+
+---
+
+## 4. Quickstart & Local Execution
+
+### 1. Prerequisites & Environment
 ```bash
-# Python 3.10+ (developed and verified on 3.10.0).
+# Python 3.10+
 pip install -r requirements.txt
-```
-
-First run downloads the `BAAI/bge-m3` weights (~2.3 GB) into the local
-Hugging Face cache. Every run after that is offline — the server opens the model
-with `local_files_only=True` and Chroma telemetry is disabled, so a started
-server makes no outbound request.
-
-### 2. Start ChromaDB and Ingest the document corpus
-
-```bash
-# Start ChromaDB external service (Approach 1 / interop requirement):
-chroma run --host 0.0.0.0 --port 8100 --path data/chroma &
-
-# Build both chunking strategies (heading -> retail_docs, packed -> retail_docs_packed):
-python3 data/ingest.py --strategy heading --rebuild
-python3 data/ingest.py --strategy packed --rebuild
-
-# Dry-run stats only (no model load, no ChromaDB write):
-python3 data/ingest.py --strategy heading --stats
-```
-
-### 3. Run the tests
-
-```bash
-python3 -m pytest tests/ -q
-# Expect: 11 passed. Covers the contract payloads, the malformed-argument
-# errors, and a live Streamable HTTP server on a real socket.
-```
-
-### 4. Start the server
-
-```bash
-# stdio transport:
-python3 server/main.py --transport stdio
-# HTTP transport (interop day) — retail = port 8003, bind to LAN not localhost:
-python3 server/main.py --transport http --host 0.0.0.0 --port 8003
-```
-
-`--transport http` is contract v1 §7's network transport and serves **MCP
-Streamable HTTP** at **`/mcp`** — interop clients connect to
-`http://10.10.180.103:8003/mcp`. Direct vector DB clients connect to
-`http://10.10.180.103:8100`.
-
-### 5. Run the eval harness
-
-```bash
-# Run against both strategies, scorecard to eval/scorecard_baseline.md:
-python3 eval/harness.py
-
-# Single strategy:
-python3 eval/harness.py --strategy heading --top-k 5
-```
-
-### 6. Talk to it — the chat UI on localhost
-
-Steps 1–5 prove the retrieval half but there is nothing to look at. This is the
-part a human uses. It needs a chat model; Ollama on **this** machine is enough,
-GB10 is not required.
-
-```bash
 pip install -r client/requirements.txt
-ollama pull qwen2.5:7b-instruct
-
-# terminal 1 — the MCP server
-python3 server/main.py --transport http --host 127.0.0.1 --port 8003
-
-# terminal 2 — the client + UI, then open http://127.0.0.1:8080
-python3 client/app.py
 ```
 
-Type a question, get an answer with the passages it came from and every tool
-call one click away. Same loop without the browser:
+### 2. Start Services
+
+#### A. Start ChromaDB Vector Store (Port 8100)
+```bash
+chroma run --host 0.0.0.0 --port 8100 --path data/chroma &
+```
+
+#### B. Seed SQLite Database & Ingest Corpus
+```bash
+# Ingest document corpus:
+python3 data/ingest.py --strategy heading --rebuild
+
+# Seed relational database:
+python3 data/seed_records.py
+```
+
+#### C. Start Retail MCP Server (Port 8003)
+```bash
+# Streamable HTTP transport at /mcp:
+python3 server/main.py --transport http --host 0.0.0.0 --port 8003 &
+```
+
+#### D. Start Contact-Center Chat Web UI (Port 8080)
+```bash
+python3 client/app.py --host 0.0.0.0 --port 8080 &
+```
+
+Open your browser at:
+👉 **[http://localhost:8080](http://localhost:8080)**
+
+---
+
+## 5. Live Product Journeys & CLI Audit
+
+You can execute all 7 end-to-end user journeys in the terminal in one command:
 
 ```bash
-python3 client/loop.py --trace "Can a customer return opened electronics?"
+python3 scripts/e2e_demo_audit.py
 ```
 
-The UI binds `127.0.0.1` deliberately: the *server* binds every interface for
-interop day, but the UI has no authentication and is for one person at one desk.
+### Verified User Journeys Tested:
+1. **Policy-Only Question:** *"Can a customer return opened electronics at Best Buy?"* → Cites `[retail: Best Buy — Return & Exchange Policy]`.
+2. **Record-Only Operational Lookup:** *"Look up order ORD-9011"* → Returns order status, line items, and amount from SQLite.
+3. **Composite Synthesis (Dual Provenance):** *"Can they return order ORD-9031 — what's the window and is it eligible?"* → Combines order date (12 days ago) + Amazon policy (30d window) to deduce eligibility.
+4. **State-Changing Return Creation with Safety Confirmation:** Proposes return with refund amount → User clicks **[Confirm]** → Generates RMA code `RMA-AMZ-703-9011`.
+5. **Ambiguous/Missing Parameters (Q23):** *"start a return for this customer"* → Prompts user for order ID and item ID without guessing.
+6. **Duplicate Return Prevention (Q25):** *"open a return on ORD-9033 for item ITEM-9033-1"* → Refuses duplicate return for already-returned item (`RET-702`).
+7. **Honest Refusal on Unknown Records (Q28):** *"status of order ORD-99999999?"* → Honestly reports order not found.
 
-See `client/README.md` for the model choice (`qwen3:1.7b` cannot tool-call at
-all — 0 of 3 trials) and for the grounding gate that stops the model answering
-from memory with invented citations.
+---
 
-### 7. Anything needing the shared GB10 chat model  *(NOT required for 1–6)*
+## 6. Multi-Server Interoperability (Banking Partner Integration)
 
-Everything in this step talks to the team's shared Ollama box. Off that LAN, or
-with `qwen3:8b` not yet pulled, these fail — and nothing above depends on them.
+The client fleet dynamically discovers and connects to partner MCP servers configured in `client/servers.json`:
+
+* **Retail MCP Server:** `http://127.0.0.1:8003/mcp` (Active)
+* **Banking MCP Server (Aseem):** `http://10.10.180.175:8420/mcp` (Active)
+
+### Cross-Server Comparative Prompts (Tested Live):
+> *"Compare the policy on Amazon refund timelines with how U.S. Bank handles card transaction disputes."*
+* Calls `retail.kb_retail_search` + `banking.kb_banking_search` in parallel.
+* Synthesizes a unified comparative response citing both `[retail: Amazon — Refund Timelines]` and `[banking: Bank of America - Credit Card Dispute FAQ]`.
+
+---
+
+## 7. Automated Test Suite
+
+Run the full 48-test test suite across all layers:
 
 ```bash
-export OLLAMA_HOST=http://10.10.150.150:11434   # chat ONLY (qwen3:8b), pulled on GB10
-python3 client/toolcall_test.py                 # exits 1 if the model is unreachable
-# python3 client/main.py                        (to add)
+python3 -m pytest tests/ -v
 ```
 
-Known state as of 13 Aug 2026: GB10 is unreachable from this machine. Escalated
-per brief §13. The §4 transcript in the design document is still the
-`qwen2.5:7b-instruct` proxy run and gets replaced once GB10 is back.
-
-**Local fallback while GB10 is down.** Ollama runs on this host too, so the
-tool-call loop stays testable — point `OLLAMA_HOST` at `http://localhost:11434`.
-
-**Embedding never touches GB10.** The MCP server embeds queries itself with
-`sentence-transformers` (`BAAI/bge-m3`) on this host, per the manager's
-2026-08-11 decision.
-
-## Models
-
-- **Chat: `qwen3:8b`** via Ollama on the shared **GB10 server** (`10.10.150.150:11434`) — called only by the client. Team pick (~6–8 GB). Tool-calling verified on a Qwen-family instruct model as proxy (`qwen2.5:7b-instruct`); re-verified on `qwen3:8b` once pulled on GB10 — transcript in `docs/design_document.md` §4.
-- **Embedding: `BAAI/bge-m3`** via `sentence-transformers`, **local on my host** (`10.10.180.132`, ~2.3 GB) — called directly by the MCP server, never on GB10.
-
-## Status
-
-**Phase A (baseline gate) — DONE.** Corpus ingested (22 docs, 2 strategies), harness runs, baseline scorecard generated. Recall@5 = 100% (both strategies), Recall@1 = 100% heading / 90.9% packed.
-
-**Phase B (MCP server) — IMPLEMENTED / local verification complete.**
-`kb_retail_search`, `kb_retail_documents`, and `kb_retail_search_template` are
-available over stdio and over MCP Streamable HTTP at `/mcp` (contract v1 §7's
-`http`). The server uses the frozen `retail_docs` collection and local embeddings
-only; it never calls GB10 or an LLM. Direct vector DB access for Approach 1 is
-served via external ChromaDB on port 8100.
-
-**Phase C (client + UI) — first vertical slice running.** `client/` discovers
-tools at runtime from `client/servers.json`, runs the five-round tool-call loop
-against a local Ollama model, and serves a plain HTML/JS page on
-`127.0.0.1:8080`. Verified end to end against the live retail server: question
-in, `kb_retail_search` called, five passages returned, answer rendered with its
-sources and raw tool payloads. The other three servers stay `"enabled": false`
-in the config until interop day and their absence does not affect a turn.
-Still to come: the routing/answer-quality scorecard rows, which need this
-client plus the eval set, and the conformance reports, which need teammates.
+**Results:** **48 of 48 passed (100%)** in ~25s.
+* `test_action_create_return.py`: Validation gates, idempotency, rollbacks, and RMA generation (9 tests).
+* `test_composite_reasoning.py`: Dual-provenance reasoning across Q14, Q15, Q16, Q17 (6 tests).
+* `test_conversational_workflow.py`: Multi-turn state machine, confirmation gates, context resolution (6 tests).
+* `test_mcp_records.py`: FastMCP tools and resource discovery (5 tests).
+* `test_mcp_server.py`: Contract payloads, parameter validation, error shapes (7 tests).
+* `test_records.py` & `test_records_db.py`: SQLite queries, aggregates, FK integrity (10 tests).
+* `test_retrieval.py` & `test_transport.py`: Vector search and Streamable HTTP socket tests (5 tests).
