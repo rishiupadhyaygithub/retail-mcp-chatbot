@@ -260,16 +260,22 @@ class MCPFleet:
 
     async def call(self, qualified_name: str, arguments: dict[str, Any]) -> ToolOutcome:
         """Route one model-requested tool call to the server that advertised it."""
-        server, _, tool_name = qualified_name.partition(NAME_SEPARATOR)
-        if not tool_name:
-            return ToolOutcome(
-                server="?",
-                tool_name=qualified_name,
-                arguments=arguments,
-                ok=False,
-                payload=None,
-                note=f"'{qualified_name}' is not a tool this client offered.",
-            )
+        if NAME_SEPARATOR in qualified_name:
+            server, _, tool_name = qualified_name.partition(NAME_SEPARATOR)
+        else:
+            tool_name = qualified_name
+            matching = [s for s, session in self._sessions.items() if any(t.name == tool_name for t in session.tools)]
+            if matching:
+                server = matching[0]
+            else:
+                return ToolOutcome(
+                    server="?",
+                    tool_name=qualified_name,
+                    arguments=arguments,
+                    ok=False,
+                    payload=None,
+                    note=f"'{qualified_name}' is not a tool this client offered.",
+                )
 
         session = self._sessions.get(server)
         if session is None:

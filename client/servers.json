@@ -13,25 +13,25 @@
     {
       "name": "retail",
       "url": "http://127.0.0.1:8003/mcp",
-      "timeout_seconds": 15,
+      "timeout_seconds": 60,
       "enabled": true
     },
     {
       "name": "hospitality",
       "url": "http://10.10.180.0:8002/mcp",
-      "timeout_seconds": 15,
+      "timeout_seconds": 30,
       "enabled": false
     },
     {
       "name": "banking",
       "url": "http://10.10.180.175:8420/mcp",
-      "timeout_seconds": 15,
+      "timeout_seconds": 30,
       "enabled": true
     },
     {
       "name": "telecom",
       "url": "http://10.10.180.178:8067/mcp",
-      "timeout_seconds": 15,
+      "timeout_seconds": 30,
       "enabled": false
     }
   ]
