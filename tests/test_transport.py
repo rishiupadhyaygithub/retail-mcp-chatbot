@@ -68,6 +68,7 @@ def test_streamable_http_serves_discovery_and_tool_calls_over_a_socket() -> None
 
     tool_names, payload = asyncio.run(exercise())
 
-    assert tool_names == ["kb_retail_search"]
+    assert "kb_retail_search" in tool_names
+    assert "kb_retail_query_orders" in tool_names
     assert payload["total_found"] == 1
     assert payload["results"][0]["chunk_id"] == "retail-doc-3:chunk-1"
