@@ -13,7 +13,7 @@
 chromadb==1.0.20
 
 # --- Local embedding ------------------------------------------------------
-# BAAI/bge-small-en-v1.5 runs locally via sentence-transformers.
+# BAAI/bge-m3 runs locally via sentence-transformers.
 # Does NOT run on the GB10 box.
 sentence-transformers==5.5.1
 torch==2.12.0

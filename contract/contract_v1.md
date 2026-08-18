@@ -138,10 +138,10 @@ Bind to your machine's actual network interface, not `localhost`.
 
 | Intern | Industry | Host / IP | Port |
 |---|---|---|---|
-| 1 | Banking | _pending — owner fills before interop_ | _pending_ |
+| 1 | Banking | 10.10.180.175 | 8420 |
 | 2 | Hospitality | _pending — owner fills before interop_ | _pending_ |
 | 3 | Retail | 10.10.180.132 | 8003 |
-| 4 | Telecom | _pending — owner fills before interop_ | _pending_ |
+| 4 | Telecom | 10.10.180.178 | 8067 |
 
 Update this table immediately if any address changes, other clients depend on it.
 

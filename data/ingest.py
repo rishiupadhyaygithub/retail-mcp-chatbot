@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
 import statistics
 import sys
@@ -46,7 +47,7 @@ CHROMA_DIR = SCRIPT_DIR / "chroma"
 
 # Locked constants. Do not tune casually -- measured against the real 22-document
 # corpus, and the eval ground truth is pinned to the chunk_ids they produce.
-MODEL_NAME = "BAAI/bge-small-en-v1.5"
+MODEL_NAME = "BAAI/bge-m3"
 INDUSTRY = "retail"  # the <industry> in contract v1's "<industry>-doc-<n>:chunk-<n>"
 
 TARGET_WORDS = 100  # packed: aim for this many prose words per chunk
@@ -54,7 +55,11 @@ MAX_WORDS = 150     # packed: hard ceiling for a packed chunk
 MIN_WORDS = 40      # packed: floor, stops the packer emitting a runt tail
 OVERLAP_WORDS = 50  # only used when a single "##" section exceeds MAX_WORDS
 
-COLLECTIONS = {"heading": "retail_docs_heading", "packed": "retail_docs_packed"}
+COLLECTIONS = {
+    "heading": "retail_docs",
+    "packed": "retail_docs_packed",
+    "retail_docs_heading": "retail_docs_heading",
+}
 DOCUMENT_TYPES = ("returns", "warranty", "delivery", "payments", "order_tracking")
 
 # document_type comes from the FILENAME STEM, never guessed. Three stems are not
@@ -413,15 +418,33 @@ def embed(texts: list[str]) -> list[list[float]]:
     return [v.tolist() for v in vectors]
 
 
-def write_collection(chunks: list[Chunk], strategy: str, rebuild: bool) -> str:
+def write_collection(
+    chunks: list[Chunk],
+    strategy: str,
+    rebuild: bool,
+    host: str = "127.0.0.1",
+    port: int = 8100,
+    collection_name: str | None = None,
+) -> str:
     try:
         import chromadb
     except ImportError as exc:
         die(f"chromadb is not installed ({exc}). pip install -r requirements.txt")
 
-    name = COLLECTIONS[strategy]
+    name = collection_name or COLLECTIONS[strategy]
     CHROMA_DIR.mkdir(parents=True, exist_ok=True)
-    client = chromadb.PersistentClient(path=str(CHROMA_DIR))
+    try:
+        client = chromadb.HttpClient(host=host, port=port)
+        client.heartbeat()
+        endpoint_desc = f"HttpClient at {host}:{port}"
+    except Exception as exc:
+        print(
+            f"[ingest] could not connect to Chroma HttpClient at {host}:{port} ({exc}); "
+            f"falling back to PersistentClient at {CHROMA_DIR}",
+            file=sys.stderr,
+        )
+        client = chromadb.PersistentClient(path=str(CHROMA_DIR))
+        endpoint_desc = f"PersistentClient at {CHROMA_DIR}"
 
     if rebuild and name in {c.name for c in client.list_collections()}:
         print(f"[ingest] --rebuild: deleting collection {name}", file=sys.stderr)
@@ -448,7 +471,7 @@ def write_collection(chunks: list[Chunk], strategy: str, rebuild: bool) -> str:
     written = collection.count()
     if written != len(chunks):
         die(f"wrote {written} records but built {len(chunks)} chunks")
-    print(f"[ingest] wrote {written} records to {name} at {CHROMA_DIR}", file=sys.stderr)
+    print(f"[ingest] wrote {written} records to {name} via {endpoint_desc}", file=sys.stderr)
     return name
 
 
@@ -458,12 +481,18 @@ def main(argv: list[str] | None = None) -> int:
         prog="ingest.py",
         description="Chunk, embed and load the retail corpus into ChromaDB.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=f"heading = one chunk per '##' section (the naive baseline)\n"
-               f"packed  = '##' sections packed to ~{TARGET_WORDS} words, {MAX_WORDS} max"
-               f" (default)\n--stats is a DRY RUN: table only, embeds and writes nothing.",
+        epilog=f"heading = one chunk per '##' section -> 'retail_docs' (default)\n"
+               f"packed  = '##' sections packed to ~{TARGET_WORDS} words, {MAX_WORDS} max -> 'retail_docs_packed'\n"
+               f"--stats is a DRY RUN: table only, embeds and writes nothing.",
     )
-    parser.add_argument("--strategy", choices=sorted(COLLECTIONS), default="packed",
-                        help="chunking strategy (default: packed)")
+    parser.add_argument("--strategy", choices=sorted(COLLECTIONS), default="heading",
+                        help="chunking strategy (default: heading -> retail_docs)")
+    parser.add_argument("--collection", default=None,
+                        help="explicit collection name (defaults to mapping for strategy)")
+    parser.add_argument("--host", default=os.environ.get("CHROMA_HOST", "127.0.0.1"),
+                        help="ChromaDB host (default: 127.0.0.1 or CHROMA_HOST)")
+    parser.add_argument("--port", type=int, default=int(os.environ.get("CHROMA_PORT", "8100")),
+                        help="ChromaDB port (default: 8100 or CHROMA_PORT)")
     parser.add_argument("--rebuild", action="store_true",
                         help="delete and recreate the collection before writing")
     parser.add_argument("--stats", action="store_true",
@@ -481,7 +510,7 @@ def main(argv: list[str] | None = None) -> int:
         print("[ingest] --stats is a dry run; nothing embedded, nothing written.", file=sys.stderr)
         return 0
 
-    name = write_collection(chunks, args.strategy, args.rebuild)
+    name = write_collection(chunks, args.strategy, args.rebuild, host=args.host, port=args.port, collection_name=args.collection)
     sizes = sorted(c.word_count for c in chunks)
     json.dump({
         "strategy": args.strategy, "collection": name, "chroma_path": str(CHROMA_DIR),

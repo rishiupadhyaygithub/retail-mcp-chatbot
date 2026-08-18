@@ -21,7 +21,7 @@ chroma_db/
 data/chroma/
 *.sqlite3
 
-# Local embedding model cache — BAAI/bge-small-en-v1.5 weights, ~130MB
+# Local embedding model cache — BAAI/bge-m3 weights, ~2.3GB
 .cache/
 models/
 .sentence_transformers_cache/

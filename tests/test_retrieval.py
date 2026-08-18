@@ -3,7 +3,7 @@
 from server.retrieval import RetailRetrieval
 
 
-def test_search_reuses_heading_collection_and_normalizes_scores() -> None:
+def test_search_reuses_retail_docs_collection_and_normalizes_scores() -> None:
     retrieval = RetailRetrieval()
 
     response = retrieval.search("how long till they get their money back on a return?", top_k=1)
@@ -11,6 +11,6 @@ def test_search_reuses_heading_collection_and_normalizes_scores() -> None:
     assert response.total_found == 1
     result = response.results[0]
     assert result.chunk_id.startswith("retail-doc-")
-    # Recorded heading-baseline top result for this Phase A question.
-    assert result.source == "bestbuy/returns.md"
+    # Recorded BGE-M3 baseline top result for this Phase A question.
+    assert result.source == "amazon/refund_timelines.md"
     assert 0.0 <= result.score <= 1.0

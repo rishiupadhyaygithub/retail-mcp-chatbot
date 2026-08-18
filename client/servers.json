@@ -17,20 +17,20 @@
       "enabled": true
     },
     {
-      "name": "healthcare",
-      "url": "http://10.10.180.0:8001/mcp",
-      "timeout_seconds": 15,
-      "enabled": false
-    },
-    {
-      "name": "banking",
+      "name": "hospitality",
       "url": "http://10.10.180.0:8002/mcp",
       "timeout_seconds": 15,
       "enabled": false
     },
     {
+      "name": "banking",
+      "url": "http://10.10.180.175:8420/mcp",
+      "timeout_seconds": 15,
+      "enabled": false
+    },
+    {
       "name": "telecom",
-      "url": "http://10.10.180.0:8004/mcp",
+      "url": "http://10.10.180.178:8067/mcp",
       "timeout_seconds": 15,
       "enabled": false
     }

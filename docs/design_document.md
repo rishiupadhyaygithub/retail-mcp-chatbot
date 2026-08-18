@@ -407,8 +407,28 @@ The estimate I'd flag is the client + interop one (2.5 days). If it slips, I say
 
 Everything tagged **[ASSUMPTION]** above and how I settle it. **Settled by measurement (baseline scorecard, 13 Aug):** the stack — the server runs over stdio and MCP Streamable HTTP and is exercised by a live-socket test; the vector store and embedding model — Chroma + `bge-small-en-v1.5` hit Recall@5 = 100% and Recall@1 = 90.9% at n=11, both inside the ≤300 ms gate; the chunking — heading-split-then-pack was built and both granularities scored, and `heading` won the Recall@1 tiebreaker, so no hybrid fallback was needed. **Still open:** the routing method (measure early, classifier ready as backup) and the Recall@1 target (argue for an accept-set if the contradictions bite) — both need the client, which is not built. Everything tagged **[AGREE]** is a contract-v1 or shared-schedule item.
 
-What's already settled: spec `2026-07-28`; GB10 (`10.10.150.150:11434`) runs the shared chat model only (Qwen3 8B, client-called); embedding is local on my host (`bge-small-en-v1.5`, off GB10); my server is `10.10.180.132:8003`; the UI is plain HTML/JS. The only open **[TODO]** is the shared demo dates, which we fix as a team.
+What's already settled: spec `2026-07-28`; GB10 (`10.10.150.150:11434`) runs the shared chat model only (Qwen3 8B, client-called); embedding is local on my host; my server is `10.10.180.132:8003`; the UI is plain HTML/JS. The only open **[TODO]** is the shared demo dates, which we fix as a team.
 
 ---
 
-*End of v1.0. I'll get the other three to read it before I submit, and expect one round of changes.*
+## 13. Addendum (18 Aug 2026) — Dual-Contract Alignment (Approach 1 & Approach 2)
+
+Following the team alignment on inter-intern data access architectures:
+- **Approach 1 (Direct Vector DB query across industries):** Fatima, Aroosh.
+- **Approach 2 (MCP client routes to other MCP servers):** Assem, Rishi.
+
+To support both approaches seamlessly:
+1. **Vector DB Access Contract Compliance:**
+   - Vector database runs as an external service (`chroma run --host 0.0.0.0 --port 8100 --path data/chroma`), reachable on the LAN at `10.10.180.132:8100`.
+   - Embedding model upgraded to the team standard `BAAI/bge-m3` (1024-dimensional vectors, local CPU).
+   - Primary collection named `retail_docs` (97 chunks, cosine distance).
+2. **MCP Server (Contract v1) Compliance:**
+   - Serves `kb_retail_search`, `kb_retail_documents`, and `kb_retail_search_template` over Streamable HTTP at `http://10.10.180.132:8003/mcp`.
+   - Score normalization unified to `1.0 - distance` (exact cosine similarity).
+3. **Re-baselined Performance (BGE-M3 on retail_docs):**
+   - **Recall@5 = 100.0% (11/11)** — PASS.
+   - **Recall@1 = 100.0% (11/11)** — PASS (up from 90.9% with bge-small).
+
+---
+
+*End of Design Document with Addendum.*

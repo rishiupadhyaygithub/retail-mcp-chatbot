@@ -3,7 +3,7 @@
 Thin MCP adapter over the frozen Phase A retrieval baseline.
 
 **Rule: this server never calls an LLM.** It embeds locally with
-`BAAI/bge-small-en-v1.5` and queries `retail_docs_heading` in `data/chroma`.
+`BAAI/bge-m3` and queries `retail_docs` in ChromaDB (external service on port 8100, with fallback to persistent client in `data/chroma`).
 
 ## Run
 

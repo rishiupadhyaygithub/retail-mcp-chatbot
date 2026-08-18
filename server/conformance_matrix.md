@@ -14,4 +14,4 @@
 | One useful prompt | `kb_retail_search_template` | prompt discovery/get test |
 | stdio plus network HTTP | CLI maps `http` to MCP Streamable HTTP at `/mcp`, `0.0.0.0:8003`; deprecated SSE stays selectable via `--transport sse` | `test_streamable_http_serves_discovery_and_tool_calls_over_a_socket`, `test_contract_http_maps_to_streamable_http_not_sse`; live check against `10.10.180.132:8003` |
 | Negotiated protocol version | `2025-11-25` — the newest entry in the SDK's `HANDSHAKE_PROTOCOL_VERSIONS`, on both `mcp==2.0.0` and `mcp==1.27.2` | live `initialize` over stdio and Streamable HTTP; see design document §2 |
-| No LLM / no GB10 dependency | `server/retrieval.py` only loads local Chroma + BGE | code review and live retrieval test |
+| No LLM / no GB10 dependency | `server/retrieval.py` only loads local Chroma (port 8100) + BGE-M3 | code review and live retrieval test |

@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 import time
 from dataclasses import dataclass, field
@@ -31,8 +32,8 @@ CORPUS_ROOT = REPO_ROOT / "data" / "corpus"
 DEFAULT_GROUND_TRUTH = REPO_ROOT / "eval" / "ground_truth.json"
 DEFAULT_OUT = REPO_ROOT / "eval" / "scorecard_baseline.md"
 DEFAULT_DB = REPO_ROOT / "data" / "chroma"
-EMBED_MODEL = "BAAI/bge-small-en-v1.5"
-COLLECTIONS = {"heading": "retail_docs_heading", "packed": "retail_docs_packed"}
+EMBED_MODEL = "BAAI/bge-m3"
+COLLECTIONS = {"heading": "retail_docs", "packed": "retail_docs_packed"}
 SOURCE_KEYS = ("relative_path", "path", "source_path", "file", "source")
 INGEST_HINT = ("Run ingestion first:\n         python3 data/ingest.py --strategy heading\n"
                "         python3 data/ingest.py --strategy packed")
@@ -302,8 +303,8 @@ def run_strategy(strategy: str, client: Any, db: Path, model: Any, questions: li
             if dist > 2.0001:
                 out.warnings.append(f"saw distance {dist:.3f}, outside the cosine range [0, 2] - the collection "
                                     f"may not have been created with hnsw:space=cosine")
-            # Contract v1 normalises similarity to 0-1; Chroma cosine distance runs 0-2.
-            record = {"content": doc, "score": round(max(0.0, 1.0 - dist / 2.0), 4)}
+            # Contract v1 normalises similarity to 0-1 (cosine similarity = 1 - distance).
+            record = {"content": doc, "score": round(max(0.0, min(1.0, 1.0 - dist)), 4)}
             record.update({k: meta[k] for k in sorted(meta)})
             records.append(record)
 
@@ -484,6 +485,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--ground-truth", type=Path, default=DEFAULT_GROUND_TRUTH,
                    help="ground truth JSON (the eval set is data, not code)")
     p.add_argument("--db", type=Path, default=DEFAULT_DB, help="Chroma persistent directory built by ingestion")
+    p.add_argument("--host", default=os.environ.get("CHROMA_HOST", "127.0.0.1"),
+                   help="ChromaDB host (default: 127.0.0.1 or CHROMA_HOST)")
+    p.add_argument("--port", type=int, default=int(os.environ.get("CHROMA_PORT", "8100")),
+                   help="ChromaDB port (default: 8100 or CHROMA_PORT)")
     p.add_argument("--model", default=EMBED_MODEL, help="local sentence-transformers model")
     p.add_argument("--query-prefix", default="", help="prefix prepended to every query before embedding; bge "
                    "recommends 'Represent this sentence for searching relevant passages: '. Default off, matching "
@@ -521,7 +526,15 @@ def main(argv: list[str] | None = None) -> int:
     model_load_ms = (time.perf_counter() - t0) * 1000.0
     log(f"  model loaded in {model_load_ms:.0f} ms")
     counter = build_token_counter(args.tokenizer, model)
-    client = chromadb.PersistentClient(path=str(args.db))
+
+    try:
+        client = chromadb.HttpClient(host=args.host, port=args.port)
+        client.heartbeat()
+        log(f"  connected to ChromaDB via HttpClient at {args.host}:{args.port}")
+    except Exception as exc:
+        log(f"  could not connect to ChromaDB at {args.host}:{args.port} ({exc}); falling back to PersistentClient at {args.db}")
+        client = chromadb.PersistentClient(path=str(args.db))
+
     names = ["heading", "packed"] if args.strategy == "both" else [args.strategy]
     strategies = [run_strategy(nm, client, args.db, model, questions, args.top_k, counter, args.query_prefix)
                   for nm in names]
