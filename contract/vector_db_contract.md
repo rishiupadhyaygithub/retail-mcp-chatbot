@@ -18,7 +18,7 @@ Chroma, run as its own external service (`chroma run`), not embedded. Every inte
 |---|---|---|---|
 | 1 | Banking | 10.10.180.175 | 8001 |
 | 2 | Hospitality | _pending_ | _pending_ |
-| 3 | Retail | 10.10.180.132 | 8100 |
+| 3 | Retail | 10.10.180.103 | 8100 |
 | 4 | Telecom | 10.10.180.178 | 8004 |
 
 Bind to your machine's actual LAN IP on `0.0.0.0`, not `127.0.0.1`.

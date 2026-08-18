@@ -140,7 +140,7 @@ Bind to your machine's actual network interface, not `localhost`.
 |---|---|---|---|
 | 1 | Banking | 10.10.180.175 | 8420 |
 | 2 | Hospitality | _pending — owner fills before interop_ | _pending_ |
-| 3 | Retail | 10.10.180.132 | 8003 |
+| 3 | Retail | 10.10.180.103 | 8003 |
 | 4 | Telecom | 10.10.180.178 | 8067 |
 
 Update this table immediately if any address changes, other clients depend on it.

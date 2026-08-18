@@ -83,8 +83,8 @@ python3 server/main.py --transport http --host 0.0.0.0 --port 8003
 
 `--transport http` is contract v1 §7's network transport and serves **MCP
 Streamable HTTP** at **`/mcp`** — interop clients connect to
-`http://10.10.180.132:8003/mcp`. Direct vector DB clients connect to
-`http://10.10.180.132:8100`.
+`http://10.10.180.103:8003/mcp`. Direct vector DB clients connect to
+`http://10.10.180.103:8100`.
 
 ### 5. Run the eval harness
 

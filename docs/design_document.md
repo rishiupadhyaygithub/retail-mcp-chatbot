@@ -419,11 +419,11 @@ Following the team alignment on inter-intern data access architectures:
 
 To support both approaches seamlessly:
 1. **Vector DB Access Contract Compliance:**
-   - Vector database runs as an external service (`chroma run --host 0.0.0.0 --port 8100 --path data/chroma`), reachable on the LAN at `10.10.180.132:8100`.
+   - Vector database runs as an external service (`chroma run --host 0.0.0.0 --port 8100 --path data/chroma`), reachable on the LAN at `10.10.180.103:8100`.
    - Embedding model upgraded to the team standard `BAAI/bge-m3` (1024-dimensional vectors, local CPU).
    - Primary collection named `retail_docs` (97 chunks, cosine distance).
 2. **MCP Server (Contract v1) Compliance:**
-   - Serves `kb_retail_search`, `kb_retail_documents`, and `kb_retail_search_template` over Streamable HTTP at `http://10.10.180.132:8003/mcp`.
+   - Serves `kb_retail_search`, `kb_retail_documents`, and `kb_retail_search_template` over Streamable HTTP at `http://10.10.180.103:8003/mcp`.
    - Score normalization unified to `1.0 - distance` (exact cosine similarity).
 3. **Re-baselined Performance (BGE-M3 on retail_docs):**
    - **Recall@5 = 100.0% (11/11)** — PASS.
