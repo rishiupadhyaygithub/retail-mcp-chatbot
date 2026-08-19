@@ -95,6 +95,45 @@ def load_server_configs(path: Path = CONFIG_PATH) -> list[ServerConfig]:
     ]
 
 
+def describe_exception(exc: BaseException) -> str:
+    """A one-line cause an operator can act on.
+
+    The MCP transport runs inside an anyio task group, so a refused connection
+    surfaces as an `ExceptionGroup` whose own message is only
+    `unhandled errors in a TaskGroup (1 sub-exception)` — it names no host, no
+    port and no reason, which is useless in the degradation banner.  The real
+    cause is nested inside, sometimes several groups deep, so unwrap to the
+    leaves and report those.
+
+    Duck-typed on `.exceptions` rather than `except*` or an `ExceptionGroup`
+    import, because the builtin only exists on 3.11+ and this runs on 3.10,
+    where anyio raises the `exceptiongroup` backport instead.
+    """
+    leaves: list[str] = []
+    seen: set[int] = set()
+
+    def walk(err: BaseException) -> None:
+        if id(err) in seen:  # defensive: a cycle would otherwise hang the client
+            return
+        seen.add(id(err))
+        nested = getattr(err, "exceptions", None)
+        if nested:
+            for sub in nested:
+                walk(sub)
+            return
+        text = str(err).strip()
+        # Bare OSError subclasses often stringify to nothing useful on their own.
+        if not text and err.__cause__ is not None:
+            text = str(err.__cause__).strip()
+        leaves.append(f"{type(err).__name__}: {text}" if text else type(err).__name__)
+
+    walk(exc)
+    # Distinct causes only, order preserved — three identical refusals from one
+    # retrying transport should read as one reason, not three.
+    unique = list(dict.fromkeys(leaves))
+    return "; ".join(unique) if unique else f"{type(exc).__name__}: {exc}"
+
+
 class _ServerSession:
     """One server, owned end to end by one asyncio task.
 
@@ -124,7 +163,7 @@ class _ServerSession:
             self.error = f"no response within {self.config.timeout_seconds:.0f}s"
             return False
         except Exception as exc:  # noqa: BLE001 - degrade, never crash
-            self.error = f"{type(exc).__name__}: {exc}"
+            self.error = describe_exception(exc)
             return False
         return True
 
@@ -152,7 +191,7 @@ class _ServerSession:
         except Exception as exc:  # noqa: BLE001
             if not self._ready.done():
                 self._ready.set_exception(exc)
-            self.error = f"{type(exc).__name__}: {exc}"
+            self.error = describe_exception(exc)
             self._fail_pending(exc)
 
     async def _serve(self, session: ClientSession) -> None:
