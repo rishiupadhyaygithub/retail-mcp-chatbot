@@ -28,3 +28,7 @@ models/
 
 # Eval harness run artifacts (keep the committed scorecard, drop raw runs)
 eval/runs/
+
+# Generated SQLite databases — rebuilt deterministically by data/seed_records.py
+# and by scripts/e2e_demo_audit.py. Tracked binaries churned on every run.
+data/*.db
