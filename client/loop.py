@@ -161,6 +161,75 @@ _STOPWORDS = frozenset({
 })
 
 
+# An opener like "hi" or "I want a help" is not a question with an answer to
+# ground.  The grounding gate treats any answer with no tool behind it as a
+# fabrication risk, which is right for "what is the return window" and wrong
+# here: it met a person saying hello with
+# "I don't know — I have no retrieved sources for this, and I won't answer a
+# policy question without them."  That is a dead end for the one user who most
+# needs guidance, and it is not even accurate, because no policy question was
+# asked.
+OPENER_PATTERNS = (
+    r"^(hi|hey|hello|yo|hiya)\b",
+    r"^(good )?(morning|afternoon|evening)\b",
+    r"\bhelp me\b", r"\bi (want|need) (a |some )?help\b", r"\bcan you help\b",
+    r"\bwhat can you do\b", r"\bwho are you\b", r"\bhow do (i|you) (start|work)\b",
+    r"^(thanks|thank you|ok|okay|cool|got it)\b",
+    r"^\W*$",
+)
+
+# If any of these appear, the user is asking something substantive even if they
+# also said hello, so the normal loop runs and the gates apply as usual.
+SUBSTANTIVE_MARKERS = POLICY_INTENT + RECORD_INTENT + (
+    "return", "refund", "order", "ship", "deliver", "warranty", "cancel",
+    "charge", "track", "exchange", "fee", "dispute", "account",
+)
+
+
+def is_opener(question: str) -> bool:
+    """True for a greeting or a bare request for help, with nothing to look up."""
+    low = question.strip().lower()
+    if len(low) > 120:
+        return False
+    if any(m in low for m in SUBSTANTIVE_MARKERS):
+        return False
+    return any(re.search(p, low) for p in OPENER_PATTERNS)
+
+
+def capability_summary(tools: list[Any]) -> str:
+    """What this assistant can do, described from what was actually discovered.
+
+    Built from the live tool list rather than a written-out sentence, so it can
+    never advertise a capability the fleet is not currently serving — including
+    when a peer server is down and its tools are absent.
+    """
+    by_server: dict[str, list[str]] = {}
+    for tool in tools:
+        bare = tool.tool_name
+        for prefix in ("kb_",):
+            if bare.startswith(prefix):
+                bare = bare[len(prefix):]
+        bare = bare.replace(f"{tool.server}_", "", 1).replace("_", " ")
+        by_server.setdefault(tool.server, []).append(bare)
+
+    lines = [
+        "I answer questions about published policies and the operational records "
+        "behind them, and every answer is grounded in a source I retrieve first.",
+        "",
+        "Right now I can reach:",
+    ]
+    for server, names in sorted(by_server.items()):
+        lines.append(f"  • {server}: {', '.join(sorted(names))}")
+    lines += [
+        "",
+        "Ask me something specific and I will go and look it up. For example:",
+        "  • \"can a customer return opened electronics at Best Buy?\"",
+        "  • \"what's the status of order ORD-9021?\"",
+        "  • \"can they return order ORD-9031 — what's the window and is it eligible?\"",
+    ]
+    return "\n".join(lines)
+
+
 def is_comparative_question(question: str) -> bool:
     low = f" {question.lower()} "
     return any(m in low for m in COMPARATIVE_MARKERS)
@@ -387,6 +456,15 @@ async def run_turn(
                 "Start the retail server with "
                 "`python3 server/main.py --transport http --port 8003`."
             )
+            return result
+
+        # Answered before the model runs. A greeting has nothing to retrieve, so
+        # sending it round the loop only produces prose the grounding gate then
+        # discards, leaving the user with a refusal to a question they never
+        # asked. This reply makes no factual claim — it lists what was actually
+        # discovered — so there is nothing here to be ungrounded about.
+        if is_opener(question):
+            result.answer = capability_summary(fleet.tools)
             return result
 
         nudged = False

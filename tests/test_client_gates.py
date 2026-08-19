@@ -27,9 +27,11 @@ import pytest  # noqa: E402
 
 from client.loop import (  # noqa: E402
     brand_from_records,
+    capability_summary,
     classify_tool_type,
     is_composite_question,
     is_comparative_question,
+    is_opener,
     is_write_tool,
     search_query_argument,
     servers_matching_question,
@@ -318,3 +320,48 @@ def test_headings_only_chunk_falls_back_to_the_original():
     """An empty answer would silently drop the only evidence there was."""
     assert passage_to_prose("# Only headings\n## Nothing else") == \
         "# Only headings\n## Nothing else"
+
+
+# --------------------------------------------------------------------------
+# Openers: a greeting is not a policy question.
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("question", [
+    "I want a help", "hi", "hello there", "hey", "good morning",
+    "what can you do?", "can you help", "help me", "thanks", "", "   ",
+])
+def test_openers_are_recognised(question):
+    """Reported from the running UI: "I want a help" was answered with
+    "I don't know — I have no retrieved sources for this, and I won't answer a
+    policy question without them." No policy question had been asked, so that
+    refusal was both unhelpful and untrue.
+    """
+    assert is_opener(question)
+
+
+@pytest.mark.parametrize("question", [
+    "can a customer return opened electronics?",
+    "status of order ORD-9021?",
+    "help me understand the return window",   # says help, asks something real
+    "hi, can they return order ORD-9031?",    # greeting plus a real question
+    "I need help with a refund",
+    "what's the CEO's mobile number?",        # must still reach the refusal path
+])
+def test_substantive_questions_are_not_treated_as_openers(question):
+    """A greeting attached to a real question must not skip retrieval."""
+    assert not is_opener(question)
+
+
+def test_capability_summary_only_advertises_discovered_tools():
+    """It must never claim a capability the fleet is not currently serving.
+
+    Built from the live tool list, so a peer being down removes it from the
+    reply rather than promising something that cannot be delivered.
+    """
+    summary = capability_summary(FLEET)
+    assert "retail" in summary and "banking" in summary
+    assert "search" in summary
+    # A server absent from discovery must not appear.
+    assert "telecom" not in summary
+    retail_only = capability_summary([t for t in FLEET if t.server == "retail"])
+    assert "banking" not in retail_only

@@ -1,5 +1,13 @@
 # Scorecard — client layer (routing, answer quality, latency)
 
+> **STALE — DO NOT CITE.** Generated before the composite, brand-scoping and
+> comparative gates landed, so the routing and answer-quality rows below
+> understate current behaviour (composite handling and cross-server synthesis
+> were both measured at 100% on their subsets afterwards). A regeneration is
+> in progress. Note also that a run killed by a timeout leaves the previous
+> file in place untouched — always check the Generated stamp below against
+> the change you are evaluating.
+
 **Generated:** 2026-08-19 09:13 UTC  
 **Model:** `qwen2.5:7b-instruct`  
 **Questions run:** 27 of 28  

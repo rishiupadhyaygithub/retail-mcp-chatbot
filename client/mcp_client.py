@@ -149,6 +149,16 @@ class _ServerSession:
         self._queue: asyncio.Queue = asyncio.Queue()
         self._ready: asyncio.Future = asyncio.get_event_loop().create_future()
         self._task: asyncio.Task | None = None
+        # When a connect times out, `start()` gives up and returns False, but the
+        # owner task keeps going and eventually sets the failure on `_ready` —
+        # which nobody is waiting on any more. Python then prints
+        # "Future exception was never retrieved" with the full anyio traceback,
+        # burying a handled degradation under 60 lines of noise that reads like a
+        # crash. The failure is already reported through `self.error` and the
+        # degraded banner, so retrieving it here just marks it as seen.
+        self._ready.add_done_callback(
+            lambda fut: fut.cancelled() or fut.exception()
+        )
 
     async def start(self) -> bool:
         """Connect and discover.  Returns False (never raises) on any failure."""
