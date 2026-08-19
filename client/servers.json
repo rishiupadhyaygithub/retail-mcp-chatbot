@@ -7,7 +7,11 @@
     "The other three interns' entries stay disabled until interop day; set",
     "'enabled': true and the client picks them up on the next restart with no",
     "code change. A disabled or unreachable server must not break the client:",
-    "that is the graceful-degradation case the brief requires."
+    "that is the graceful-degradation case the brief requires.",
+    "Hospitality has no address yet: contract v1 section 7 still lists it as",
+    "pending. The previous value 10.10.180.0 was invented and is a network",
+    "address, never a host, so it could never have connected. Replace the",
+    ".invalid host once the owner publishes the real one."
   ],
   "servers": [
     {
@@ -18,7 +22,7 @@
     },
     {
       "name": "hospitality",
-      "url": "http://10.10.180.0:8002/mcp",
+      "url": "http://hospitality-host-pending.invalid:8002/mcp",
       "timeout_seconds": 30,
       "enabled": false
     },

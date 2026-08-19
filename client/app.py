@@ -107,6 +107,11 @@ class Handler(BaseHTTPRequestHandler):
                 "rounds": result.rounds,
                 "pending_write": result.pending_write,
                 "grounding_blocked": result.grounding_blocked,
+                # Which half of a composite answer was never retrieved. Returned
+                # because an answer the client knows is one-sided must say so to
+                # the person relying on it; a flag that stops at the server is
+                # not a safeguard, it is a private note.
+                "composite_incomplete": result.composite_incomplete,
                 "model": self.model,
                 "prompt_version": PROMPT_VERSION,
             },

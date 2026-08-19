@@ -182,19 +182,38 @@ def servers_matching_question(
     comes first and the caller can bound how many extra calls it makes.
     """
     blobs: dict[str, str] = {}
+    home = ""
     for tool in tools:
+        text = " " + (tool.server + " " + (tool.description or "")).lower()
         if tool.server in exclude:
+            home += text
             continue
-        blobs.setdefault(tool.server, tool.server.lower())
-        blobs[tool.server] += " " + (tool.description or "").lower()
+        blobs.setdefault(tool.server, "")
+        blobs[tool.server] += text
 
     words = {
         w for w in re.findall(r"[a-z]{4,}", question.lower()) if w not in _STOPWORDS
     }
+    # A word only identifies a peer if it is DISTINCTIVE to that peer — present
+    # in its vocabulary and absent from the home server's. Domains share plenty
+    # of vocabulary, and counting shared words matched "compare our refund
+    # timeline with our delivery timeline" (entirely retail) to the banking
+    # server, because banking's description also mentions refunds. That would
+    # have fired a spurious cross-server search on a question one server fully
+    # answers.
     scored = [
-        (sum(1 for w in words if w in blob), server) for server, blob in blobs.items()
+        (sum(1 for w in words if w in blob and w not in home), server)
+        for server, blob in blobs.items()
     ]
-    return [server for score, server in sorted(scored, reverse=True) if score > 0]
+    best = max((score for score, _ in scored), default=0)
+    if best == 0:
+        return []
+    # Only the strongest match, or a genuine tie. "compare our return window with
+    # the hotel's cancellation window" scores hospitality 2 (hotel, cancellation)
+    # and telecom 1 (cancellation alone, since telecom also cancels things), and
+    # calling both would spend a search on a server the question never meant. A
+    # real three-way comparison still ties and still returns every side.
+    return [server for score, server in sorted(scored, reverse=True) if score == best]
 
 
 def search_query_argument(input_schema: dict[str, Any]) -> str:

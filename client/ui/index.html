@@ -457,6 +457,27 @@ form.onsubmit = async (e) => {
           down.map(([n, why]) => `${n} (${why})`).join("; ");
         banner.appendChild(b);
       }
+      // An answer the client already knows is one-sided, or one it refused to
+      // ground, has to say so where the answer is read. Both states were
+      // recorded server-side only, which told the person relying on the answer
+      // nothing at all.
+      if ((data.composite_incomplete || []).length) {
+        const half = data.composite_incomplete.indexOf("search") !== -1
+          ? "policy documents" : "operational records";
+        const b = el("div", "banner degraded");
+        b.textContent =
+          "Incomplete answer — this question needed both a policy rule and a " +
+          "record, but the " + half + " were never retrieved. Treat this as " +
+          "one-sided and verify before acting on it.";
+        banner.appendChild(b);
+      }
+      if (data.grounding_blocked) {
+        const b = el("div", "banner degraded");
+        b.textContent =
+          "Answer withheld — the assistant produced text with no retrieved " +
+          "source behind it, so it was discarded rather than shown.";
+        banner.appendChild(b);
+      }
     }
   } catch (err) {
     pending.remove();

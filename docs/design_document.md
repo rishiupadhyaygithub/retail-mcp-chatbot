@@ -37,12 +37,12 @@ For my domain: documents cover order tracking, returns, delivery, payments and w
 
 The only thing I share with the team is the **chat model**. It runs on the central **GB10 server** (`10.10.150.150:11434`) through Ollama, and only my client talks to it. My server never does.
 
-Everything else runs on my own machine (`10.10.180.132`): the UI, the client, the MCP server, the vector store, and the embedding model. **Embedding is local** — the server turns a query into a vector itself, using a small model on my host. Nothing about embedding touches GB10 (manager, 2026-08-11).
+Everything else runs on my own machine (`10.10.180.103`): the UI, the client, the MCP server, the vector store, and the embedding model. **Embedding is local** — the server turns a query into a vector itself, using a small model on my host. Nothing about embedding touches GB10 (manager, 2026-08-11).
 
 ```mermaid title="Figure 1 — Phase 1 architecture and data flow (retail)"
 flowchart LR
   user(["Agent on call"])
-  subgraph host["My machine — 10.10.180.132"]
+  subgraph host["My machine — 10.10.180.103"]
     ui["Web UI (HTML / JS)"]
     loop["Client: tool-call loop<br/>routing · timeouts · citations"]
     subgraph mcp["Retail MCP server :8003 — no chat model"]
@@ -407,7 +407,7 @@ The estimate I'd flag is the client + interop one (2.5 days). If it slips, I say
 
 Everything tagged **[ASSUMPTION]** above and how I settle it. **Settled by measurement (baseline scorecard, 13 Aug):** the stack — the server runs over stdio and MCP Streamable HTTP and is exercised by a live-socket test; the vector store and embedding model — Chroma + `bge-small-en-v1.5` hit Recall@5 = 100% and Recall@1 = 90.9% at n=11, both inside the ≤300 ms gate; the chunking — heading-split-then-pack was built and both granularities scored, and `heading` won the Recall@1 tiebreaker, so no hybrid fallback was needed. **Still open:** the routing method (measure early, classifier ready as backup) and the Recall@1 target (argue for an accept-set if the contradictions bite) — both need the client, which is not built. Everything tagged **[AGREE]** is a contract-v1 or shared-schedule item.
 
-What's already settled: spec `2026-07-28`; GB10 (`10.10.150.150:11434`) runs the shared chat model only (Qwen3 8B, client-called); embedding is local on my host; my server is `10.10.180.132:8003`; the UI is plain HTML/JS. The only open **[TODO]** is the shared demo dates, which we fix as a team.
+What's already settled: spec `2026-07-28`; GB10 (`10.10.150.150:11434`) runs the shared chat model only (Qwen3 8B, client-called); embedding is local on my host; my server is `10.10.180.103:8003`; the UI is plain HTML/JS. The only open **[TODO]** is the shared demo dates, which we fix as a team.
 
 ---
 

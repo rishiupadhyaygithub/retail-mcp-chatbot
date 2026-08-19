@@ -48,21 +48,21 @@ An enterprise-grade **Model Context Protocol (MCP)** server for the **Retail** i
 |---|---|
 | **`server/`** | FastMCP server implementation (`main.py`), SQLite data access layer (`records.py`), and Chroma retrieval (`retrieval.py`). Exposes 6 tools and 2 resources. |
 | **`client/`** | MCP client fleet (`mcp_client.py`), LLM tool-calling loop (`loop.py`), multi-turn workflow state machine (`workflow.py`), composite reasoner (`composite.py`), web server (`app.py`), and frontend SPA (`ui/index.html`). |
-| **`data/`** | Policy corpus (24 markdown docs across Amazon, Best Buy, Target, IKEA), ingestion scripts (`ingest.py`), SQLite schema (`schema.sql`), and deterministic dataset seeder (`seed_records.py`). |
+| **`data/`** | Policy corpus (22 markdown docs across Amazon, Best Buy, Target, IKEA), ingestion scripts (`ingest.py`), SQLite schema (`schema.sql`), and deterministic dataset seeder (`seed_records.py`). |
 | **`docs/`** | Main design document (`design_document.md`), Phase 2/3 design addendum (`design_addendum.md`), and architecture references. |
 | **`eval/`** | Ground truth dataset (`ground_truth.json`), 28 evaluation benchmark questions (`eval_set.md`), and automated evaluation harness (`harness.py`). |
 | **`conformance/`** | Interop conformance reports on teammate servers (`banking_server_report.md`). |
 | **`prompts/`** | Versioned system prompts (`system_prompt_v1.md`, `system_prompt_v2.md`). |
 | **`contract/`** | Shared interface agreements (`contract_v1.md`, `vector_db_contract.md`). |
 | **`tests/`** | Complete 48-test pytest verification suite across unit, integration, protocol, concurrency, and safety gates. |
-| **`scripts/`** | End-to-end product audit script (`e2e_demo_audit.py`). |
+| **`scripts/`** | End-to-end product audit script (`e2e_demo_audit.py`) and `verify_all.py`, the single command that checks every path a change can break. |
 
 ---
 
 ## 3. The Three Implementation Phases
 
 ### Phase 1: Unstructured Knowledge Retrieval (RAG)
-* **Corpus & Chunking:** 24 markdown files chunked via heading and packed strategies.
+* **Corpus & Chunking:** 22 markdown files chunked via heading and packed strategies.
 * **Vector Store:** ChromaDB running on port `8100` with dense `BAAI/bge-m3` 1024-d embeddings.
 * **Tool:** `kb_retail_search(query, top_k)` returning relevance-scored passages with document source and section metadata.
 * **Performance:** 100% Recall@5, 100% Recall@1 on heading strategy.
@@ -162,17 +162,38 @@ The client fleet dynamically discovers and connects to partner MCP servers confi
 
 ## 7. Automated Test Suite
 
-Run the full 48-test test suite across all layers:
+**Run everything with one command** — not only the tests, but every path a
+change can break, including cross-file consistency and the claims this README
+makes about itself:
+
+```bash
+python3 scripts/verify_all.py
+```
+
+Add `--slow` to include the retrieval harness (needs Chroma running). This
+exists because editing for one entry point does not exercise the others: a
+`schema_version` bump once left `eval/harness.py` refusing to start, and it was
+found by accident rather than by a check. Anything verified by a command typed
+once is unverified from the next commit onward.
+
+The pytest suite alone:
 
 ```bash
 python3 -m pytest tests/ -v
 ```
 
-**Results:** **48 of 48 passed (100%)** in ~25s.
-* `test_action_create_return.py`: Validation gates, idempotency, rollbacks, and RMA generation (9 tests).
-* `test_composite_reasoning.py`: Dual-provenance reasoning across Q14, Q15, Q16, Q17 (6 tests).
-* `test_conversational_workflow.py`: Multi-turn state machine, confirmation gates, context resolution (6 tests).
-* `test_mcp_records.py`: FastMCP tools and resource discovery (5 tests).
-* `test_mcp_server.py`: Contract payloads, parameter validation, error shapes (7 tests).
-* `test_records.py` & `test_records_db.py`: SQLite queries, aggregates, FK integrity (10 tests).
-* `test_retrieval.py` & `test_transport.py`: Vector search and Streamable HTTP socket tests (5 tests).
+**Results:** **89 of 89 passed (100%)** in ~21s.
+
+| File | Covers | Tests |
+|---|---|---|
+| `test_client_gates.py` | Client gates and helpers: composite/comparative detection, brand extraction, schema-driven argument discovery, unreachable-server diagnostics, passage flattening | 41 |
+| `test_action_create_return.py` | Validation gates, idempotency, rollbacks, RMA generation | 9 |
+| `test_records.py` | SQLite queries and aggregates | 8 |
+| `test_mcp_server.py` | Contract payloads, parameter validation, error shapes | 7 |
+| `test_composite_reasoning.py` | Dual-provenance reasoning across Q14–Q17 | 6 |
+| `test_conversational_workflow.py` | Multi-turn state machine, confirmation gates, context resolution | 6 |
+| `test_mcp_records.py` | FastMCP tool and resource discovery | 5 |
+| `test_records_db.py` | Schema and foreign-key integrity | 3 |
+| `test_transport.py` | Streamable HTTP over a real socket | 2 |
+| `test_retrieval.py` | Vector search | 1 |
+| `test_contract.py` | Contract v1 payload shape | 1 |
