@@ -112,6 +112,7 @@ class Outcome:
     pending_write: dict[str, Any] | None = None
     error: str = ""
     skipped: str = ""
+    composite_incomplete: list[str] = field(default_factory=list)
 
     # --- per-metric verdicts.  None means "not applicable to this question". ---
 
@@ -202,9 +203,18 @@ class Outcome:
 
     @property
     def citations_valid(self) -> bool | None:
-        """Every citation must name a server that was actually called."""
+        """Every citation must name a server that was actually called.
+
+        A composite answer that never ran its search half but still prints a
+        policy citation is fabricating: measured on Q17, the model cited
+        "Returns and Refunds Policy" having only queried the returns table.
+        Checking the server name alone would score that as valid, because the
+        retail server *was* called — for a different kind of tool.
+        """
         if not self.citations:
             return None
+        if "search" in self.composite_incomplete:
+            return False
         return all(server.strip() in self.servers_called for server, _ in self.citations)
 
     @property
@@ -251,6 +261,7 @@ async def run_one(question: str, number: int, label: dict[str, Any], model: str 
     out.available_servers = {t.split("__")[0] for t in result.tools_offered if "__" in t}
     out.unreachable = dict(result.unreachable)
     out.grounding_blocked = result.grounding_blocked
+    out.composite_incomplete = list(getattr(result, "composite_incomplete", []) or [])
     out.pending_write = result.pending_write
     out.call_count = len(result.trace)
     for event in result.trace:
@@ -388,6 +399,8 @@ def build_scorecard(outcomes: list[Outcome], model: str, gt: dict[str, Any],
             note = f"peer `{o.peer_missing}` unreachable — not scored"
         elif o.grounding_blocked:
             note = "grounding gate blocked an ungrounded answer"
+        elif o.composite_incomplete:
+            note = f"composite incomplete — never ran: {', '.join(o.composite_incomplete)}"
         refusal = mark(o.refusal_correct if o.label.get("must_refuse") else
                        (False if o.false_refusal else None))
         lines.append(
@@ -486,7 +499,23 @@ async def main_async(args: argparse.Namespace) -> int:
 
 # Questions 18-27 describe behaviour rather than corpus documents, so eval_set.md
 # section C is their only source of wording.  Quoted verbatim from that table.
+#
+# Q14-17 are also listed here, and must be: ground_truth.json splits each
+# composite question into a document half and a record half, and the document
+# half redacts the identifier to a literal `[REF]` and appends
+# "(document half only)".  That wording is correct for a retrieval harness
+# scoring which documents come back, but sending it to a chat model asks it to
+# look up an order literally called `[REF]`.  The canonical single-question
+# wording from eval_set.md section C is what an agent would actually type, so it
+# is what the client is measured on.
 EXTRA_QUESTION_TEXT = {
+    14: "I was charged twice — is that allowed and did it actually happen? "
+        "(customer CUST-101, order ORD-9011)",
+    15: "can they return order ORD-9031 — what's the window and is it eligible?",
+    16: "parcel for ORD-9021 split into two — is partial delivery covered, "
+        "and what shipped?",
+    17: "refund on return RET-701 (order ORD-9031) — how long should it take "
+        "and did it go through?",
     18: "does the bank show a refund for this charge yet?",
     19: "customer disputing a telecom bill, not our order",
     20: "do refund timelines differ between us and the bank?",

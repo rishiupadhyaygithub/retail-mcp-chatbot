@@ -1,6 +1,6 @@
 # Scorecard — client layer (routing, answer quality, latency)
 
-**Generated:** 2026-08-19 08:54 UTC  
+**Generated:** 2026-08-19 09:13 UTC  
 **Model:** `qwen2.5:7b-instruct`  
 **Questions run:** 27 of 28  
 
@@ -14,19 +14,19 @@ calls a chat model, so it cannot report any row below.
 | Metric | Target | Measured | n | Verdict |
 |---|---|---|---|---|
 | Correct server | >= 90% | 91.3% | 23 | PASS |
-| Correct tool type | >= 90% | 77.3% | 22 | **FAILED** |
+| Correct tool type | >= 90% | 86.4% | 22 | **FAILED** |
 | Spurious calls (avg/query) | <= 1 | 0.00 | 25 | PASS |
 | Cross-server synthesis | >= 80% | 0.0% | 1 | **FAILED** |
-| Composite handling | >= 80% | 0.0% | 5 | **FAILED** |
+| Composite handling | >= 80% | 40.0% | 5 | **FAILED** |
 
 ## Answer quality
 
 | Metric | Target | Measured | n | Verdict |
 |---|---|---|---|---|
 | Groundedness | 100% | 100.0% | 22 | PASS |
-| Citation accuracy | 100% | 100.0% | 16 | PASS |
-| Correct refusal | 100% | 80.0% | 5 | **FAILED** |
-| False refusal | <= 10% | 5.3% | 19 | PASS |
+| Citation accuracy | 100% | 86.7% | 15 | **FAILED** |
+| Correct refusal | 100% | 60.0% | 5 | **FAILED** |
+| False refusal | <= 10% | 0.0% | 19 | PASS |
 
 ## Action safety
 
@@ -40,42 +40,42 @@ calls a chat model, so it cannot report any row below.
 
 | Metric | Target | Measured | Verdict |
 |---|---|---|---|
-| p50 (warm) | <= 4 s | 10.48 s | **FAILED** |
-| p95 (warm) | <= 10 s | 23.57 s | **FAILED** |
-| cold start (first query, model load) | reported separately | 19.27 s | - |
+| p50 (warm) | <= 4 s | 14.21 s | **FAILED** |
+| p95 (warm) | <= 10 s | 27.13 s | **FAILED** |
+| cold start (first query, model load) | reported separately | 20.92 s | - |
 
 ## Per-question detail
 
 | # | Server | Tool type | Calls | Refusal | Citations | Latency | Note |
 |---|---|---|---|---|---|---|---|
-| 1 | ok | ok | 1 | - | ok | 13.3 s |  |
-| 2 | ok | ok | 1 | - | ok | 18.2 s |  |
-| 3 | ok | ok | 1 | - | ok | 16.4 s |  |
-| 4 | ok | ok | 1 | - | ok | 23.6 s |  |
-| 5 | ok | ok | 1 | ok | ok | 19.4 s |  |
-| 6 | ok | ok | 1 | - | ok | 19.5 s |  |
-| 7 | ok | ok | 1 | - | ok | 18.1 s |  |
-| 8 | ok | ok | 1 | - | ok | 7.6 s |  |
-| 9 | ok | ok | 1 | - | ok | 10.5 s |  |
-| 10 | ok | ok | 1 | - | - | 4.5 s |  |
-| 11 | ok | ok | 1 | - | ok | 8.6 s |  |
-| 12 | ok | ok | 1 | - | ok | 8.4 s |  |
-| 13 | ok | ok | 1 | - | - | 9.1 s |  |
-| 14 | MISS | MISS | 1 | - | ok | 23.3 s |  |
-| 15 | ok | MISS | 1 | - | ok | 12.9 s |  |
-| 16 | ok | MISS | 1 | - | - | 7.9 s |  |
-| 17 | ok | MISS | 1 | MISS | ok | 5.3 s |  |
-| 18 | ok | MISS | 1 | - | - | 8.5 s |  |
-| 19 | MISS | MISS | 1 | - | ok | 25.0 s | peer `telecom` unreachable — not scored |
-| 20 | MISS | ok | 1 | - | ok | 14.3 s |  |
-| 21 | MISS | ok | 2 | - | ok | 28.3 s | peer `hospitality` unreachable — not scored |
-| 22 | ok | ok | 0 | - | - | 3.9 s |  |
-| 23 | ok | - | 0 | - | - | 4.9 s |  |
+| 1 | ok | ok | 1 | - | ok | 14.2 s |  |
+| 2 | ok | ok | 1 | - | ok | 17.9 s |  |
+| 3 | ok | ok | 1 | - | ok | 20.7 s |  |
+| 4 | ok | ok | 1 | - | ok | 25.3 s |  |
+| 5 | ok | ok | 1 | MISS | ok | 16.4 s |  |
+| 6 | ok | ok | 1 | - | - | 16.4 s |  |
+| 7 | ok | ok | 1 | - | ok | 15.4 s |  |
+| 8 | ok | ok | 1 | - | ok | 8.8 s |  |
+| 9 | ok | ok | 1 | - | - | 10.4 s |  |
+| 10 | ok | ok | 1 | - | - | 4.9 s |  |
+| 11 | ok | ok | 1 | - | - | 7.7 s |  |
+| 12 | ok | ok | 1 | - | ok | 8.0 s |  |
+| 13 | ok | ok | 1 | - | ok | 8.5 s |  |
+| 14 | MISS | MISS | 1 | - | MISS | 20.1 s | composite incomplete — never ran: search |
+| 15 | ok | ok | 2 | - | ok | 30.0 s |  |
+| 16 | ok | ok | 2 | - | ok | 30.0 s |  |
+| 17 | ok | MISS | 1 | - | MISS | 22.3 s | composite incomplete — never ran: search |
+| 18 | ok | MISS | 1 | - | - | 8.6 s |  |
+| 19 | MISS | MISS | 1 | - | ok | 27.1 s | peer `telecom` unreachable — not scored |
+| 20 | MISS | ok | 1 | - | ok | 13.2 s |  |
+| 21 | MISS | ok | 2 | - | - | 23.8 s | peer `hospitality` unreachable — not scored |
+| 22 | ok | ok | 0 | - | - | 5.4 s |  |
+| 23 | ok | - | 0 | - | - | 4.6 s |  |
 | 24 | - | - | - | - | - | - | excluded: Multi-turn: refers to 'the return we just discussed'. eval_set.md section E requires each question run with no inter-question state. Demoed manually instead. Decision 4. |
-| 25 | ok | ok | 0 | MISS | - | 3.8 s |  |
-| 26 | - | - | 0 | ok | - | 2.7 s | grounding gate blocked an ungrounded answer |
-| 27 | - | - | 1 | ok | ok | 18.2 s |  |
-| 28 | ok | ok | 1 | ok | - | 5.7 s |  |
+| 25 | ok | ok | 0 | MISS | - | 4.0 s |  |
+| 26 | - | - | 0 | ok | - | 5.0 s | grounding gate blocked an ungrounded answer |
+| 27 | - | - | 1 | ok | ok | 15.3 s |  |
+| 28 | ok | ok | 1 | ok | - | 5.3 s |  |
 
 ## Scoring decisions
 

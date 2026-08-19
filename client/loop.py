@@ -28,7 +28,7 @@ from typing import Any
 
 import ollama
 
-from mcp_client import MCPFleet, ToolOutcome, load_server_configs
+from mcp_client import NAME_SEPARATOR, MCPFleet, ToolOutcome, load_server_configs
 
 PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "system_prompt_v2.md"
 PROMPT_VERSION = "v2"
@@ -51,6 +51,47 @@ DEFAULT_MODEL = os.environ.get("CHAT_MODEL", "qwen2.5:7b-instruct")
 # name starts with one of these verbs; the contract's phase-3 revision is
 # expected to mark writes explicitly, at which point this heuristic is replaced.
 WRITE_VERBS = ("create_", "open_", "cancel_", "update_", "delete_", "submit_", "raise_")
+
+# A composite question needs a policy document AND an operational record in one
+# answer: "is that allowed" is a rule, "did it actually happen" is a row.
+# Measured on the 28-question eval set: the model answered all four composite
+# questions with a single tool call, so composite handling scored 0%.  It picks
+# whichever half it noticed first and then answers confidently from that half
+# alone, which reads as complete and is not.
+#
+# The markers stay deliberately narrow so a pure-policy or pure-record question
+# never trips the gate.  In particular the record markers require a specific
+# identifier or a verification phrase, never a bare word like "return", so
+# Q1 ("how long till they get their money back on a return?") stays a policy
+# question and Q12 ("how much has this customer been refunded") stays a record
+# question.
+POLICY_INTENT = (
+    "policy", "allowed", "permitted", "eligible", "eligibility", "window",
+    "covered", "entitled", "supposed to", "how long", "rule", "are we able",
+)
+RECORD_INTENT = (
+    "ord-", "ret-", "item-", "cust-", "ship-", "rma-",
+    "did it", "actually happen", "did that happen", "went through",
+    "has it", "was it", "status of",
+)
+
+
+def is_composite_question(question: str) -> bool:
+    """True when one answer needs both a policy rule and an operational record."""
+    low = question.lower()
+    return any(m in low for m in POLICY_INTENT) and any(m in low for m in RECORD_INTENT)
+
+
+def classify_tool_type(qualified_name: str) -> str:
+    """`search` for document retrieval, `records` for structured lookups.
+
+    Derived from the advertised name rather than a hardcoded list, because
+    contract v1 §9 forbids writing another server's tool names down here.
+    """
+    bare = qualified_name.split(NAME_SEPARATOR)[-1] if NAME_SEPARATOR in qualified_name else qualified_name
+    if is_write_tool(qualified_name):
+        return "write"
+    return "search" if "search" in bare or "retrieve" in bare else "records"
 
 
 def load_system_prompt(path: Path = PROMPT_PATH) -> str:
@@ -83,6 +124,9 @@ class TurnResult:
     rounds: int = 0
     pending_write: dict[str, Any] | None = None
     grounding_blocked: bool = False
+    # Which halves of a composite answer were never retrieved, if any. Empty on
+    # every non-composite question and on a complete composite answer.
+    composite_incomplete: list[str] = field(default_factory=list)
 
 
 def _strip_thinking(text: str) -> str:
@@ -142,6 +186,9 @@ async def run_turn(
             return result
 
         nudged = False
+        composite_nudged = False
+        composite = is_composite_question(question)
+        types_called: set[str] = set()
         for round_index in range(1, MAX_ROUNDS + 1):
             result.rounds = round_index
             response = await asyncio.to_thread(
@@ -183,9 +230,44 @@ async def run_turn(
                     )
                     return result
 
+                # A composite question answered from one half only is worse than
+                # an incomplete answer: it reads as complete.  "Is that allowed"
+                # answered from the record alone states a rule that was never
+                # looked up; "did it happen" answered from the policy alone
+                # asserts a fact about an order nobody queried.  Ask once for the
+                # missing half, and say which half is missing rather than
+                # repeating the question.
+                missing = {"search", "records"} - types_called
+                if composite and missing and not composite_nudged and round_index < MAX_ROUNDS:
+                    composite_nudged = True
+                    needed = (
+                        "search the policy documents"
+                        if "search" in missing
+                        else "look up the operational record"
+                    )
+                    have = "the operational record" if "search" in missing else "the policy"
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                f"This question needs both a policy rule and an "
+                                f"operational record, and you only have {have}. "
+                                f"Now {needed}, then answer using both. Cite each "
+                                f"half to the tool it came from."
+                            ),
+                        }
+                    )
+                    continue
+
                 result.answer = _strip_thinking(message.get("content", "")) or (
                     "I don't know — the tools returned nothing I can answer from."
                 )
+                if composite and missing:
+                    # Nudged and still one-sided.  The answer is shown, because
+                    # half a grounded answer beats none, but it is marked so the
+                    # UI and the scorecard can see it was incomplete rather than
+                    # counting it as a clean composite answer.
+                    result.composite_incomplete = sorted(missing)
                 return result
 
             # Writes stop the loop and wait for a human yes (design doc §5), unless confirmed.
@@ -224,6 +306,9 @@ async def run_turn(
             outcomes = await asyncio.gather(
                 *(fleet.call(name, args) for name, args in prepared)
             )
+            for name, _ in prepared:
+                types_called.add(classify_tool_type(name))
+
             for outcome in outcomes:
                 result.trace.append(
                     {
