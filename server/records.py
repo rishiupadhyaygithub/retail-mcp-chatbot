@@ -160,12 +160,21 @@ class RetailRecords:
             params.append(shipment_id.strip())
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        # `o.brand` is joined in because a shipment is only interpretable against
+        # its own retailer's policy, and these four retailers' terms genuinely
+        # conflict.  Without it a client holding a shipment record cannot tell
+        # which company's delivery policy applies, and answers from whichever
+        # document ranked highest — measured returning Best Buy and Target
+        # delivery terms for a Target order.  Additive field, so existing
+        # consumers are unaffected.  Every shipment has an order by foreign key,
+        # so the inner join cannot drop rows.
         sql = f"""
             SELECT
                 s.shipment_id, s.order_id, s.tracking_number, s.carrier,
                 s.ship_date, s.estimated_delivery, s.actual_delivery,
-                s.status, s.item_ids_json
+                s.status, s.item_ids_json, o.brand
             FROM shipments s
+            JOIN orders o ON o.order_id = s.order_id
             {where_clause}
             ORDER BY s.ship_date ASC;
         """

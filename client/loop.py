@@ -82,6 +82,63 @@ def is_composite_question(question: str) -> bool:
     return any(m in low for m in POLICY_INTENT) and any(m in low for m in RECORD_INTENT)
 
 
+# Inverse of the brand code map in `server/records.py` (the `brand_map` used to
+# mint RMA codes).  Needed because a returns record carries `rma_code`
+# ("RMA-AMZ-701-9031") but no `brand` column, so the retailer is only
+# recoverable from the code.  Mirrored rather than imported: the client must not
+# depend on a server module, and contract v1 keeps them separately deployable.
+# If a brand is added server-side without updating this, the effect is a missing
+# hint, never a wrong one — `brand_from_records` returns nothing it cannot prove.
+RMA_BRAND_CODES = {"AMZ": "Amazon", "BBY": "Best Buy", "TGT": "Target", "IKA": "IKEA"}
+
+BRAND_NAMES = {
+    "amazon": "Amazon", "bestbuy": "Best Buy", "best buy": "Best Buy",
+    "target": "Target", "ikea": "IKEA",
+}
+
+
+def brand_from_records(trace: list[dict[str, Any]]) -> str:
+    """The retailer named by any record already retrieved this turn, if any.
+
+    Policies genuinely conflict across these four retailers — 30 days at Amazon
+    against 365 at IKEA — so searching without the brand is not merely vague, it
+    returns a confidently wrong window.  Measured on Q15: the record identified
+    an Amazon order and the follow-up search returned IKEA's 365-day policy,
+    which would tell an agent a 12-day-old order had a year to run.
+
+    Only what a record actually stated is returned; nothing is inferred from the
+    question text, because a guessed brand would be the same failure with an
+    extra step.
+    """
+    def walk(node: Any) -> str:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "brand" and isinstance(value, str):
+                    found = BRAND_NAMES.get(value.strip().lower())
+                    if found:
+                        return found
+                if key == "rma_code" and isinstance(value, str):
+                    parts = value.split("-")
+                    if len(parts) > 1 and parts[1].upper() in RMA_BRAND_CODES:
+                        return RMA_BRAND_CODES[parts[1].upper()]
+                nested = walk(value)
+                if nested:
+                    return nested
+        elif isinstance(node, list):
+            for item in node:
+                nested = walk(item)
+                if nested:
+                    return nested
+        return ""
+
+    for event in trace:
+        if event.get("ok"):
+            brand = walk(event.get("payload"))
+            if brand:
+                return brand
+    return ""
+
+
 def classify_tool_type(qualified_name: str) -> str:
     """`search` for document retrieval, `records` for structured lookups.
 
@@ -246,14 +303,24 @@ async def run_turn(
                         else "look up the operational record"
                     )
                     have = "the operational record" if "search" in missing else "the policy"
+                    # Name the retailer the record already proved.  These four
+                    # retailers' windows range from 15 to 365 days, so a search
+                    # without the brand does not return a vague answer, it
+                    # returns a wrong one from the wrong company.
+                    brand = brand_from_records(result.trace) if "search" in missing else ""
+                    brand_hint = (
+                        f" The record is a {brand} order, so search {brand}'s own "
+                        f"policy and do not answer from another retailer's."
+                        if brand else ""
+                    )
                     messages.append(
                         {
                             "role": "user",
                             "content": (
                                 f"This question needs both a policy rule and an "
                                 f"operational record, and you only have {have}. "
-                                f"Now {needed}, then answer using both. Cite each "
-                                f"half to the tool it came from."
+                                f"Now {needed}, then answer using both.{brand_hint} "
+                                f"Cite each half to the tool it came from."
                             ),
                         }
                     )
