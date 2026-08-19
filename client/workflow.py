@@ -24,6 +24,48 @@ from client.composite import CompositeReasoner
 from server.records import RetailRecords, get_connection
 from server.retrieval import RetailRetrieval
 
+def passage_to_prose(content: str) -> str:
+    """Strip a retrieved markdown chunk down to its readable body.
+
+    A retrieved chunk arrives with the document title and section heading baked
+    in and with markdown emphasis around key figures.  Echoing it verbatim makes
+    the assistant read like a document dump, and the headings duplicate what the
+    citation already states.
+
+    This only removes formatting — never a word.  This engine is deterministic by
+    design (no chat model runs here), so rewording would mean inventing text that
+    is not in the source, which is precisely what grounding forbids.  List lines
+    keep their bullets, since flattening a list into a sentence changes meaning.
+    """
+    lines: list[str] = []
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        # Emphasis carries no meaning once rendered as plain chat text.
+        line = re.sub(r"\*\*(.+?)\*\*", r"\1", line)
+        line = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"\1", line)
+        line = re.sub(r"__(.+?)__", r"\1", line)
+        lines.append(line)
+
+    is_list_item = lambda text: bool(re.match(r"^([-*+]|\d+\.)\s", text))  # noqa: E731
+
+    prose: list[str] = []
+    for line in lines:
+        # A list item stays on its own line, and so does the line after one;
+        # flattening a list into a sentence changes what it means.  Consecutive
+        # plain lines are one paragraph and get joined.
+        if not prose or is_list_item(line) or is_list_item(prose[-1]):
+            prose.append(line)
+        else:
+            prose[-1] = f"{prose[-1]} {line}"
+
+    # A chunk that is nothing but headings would otherwise flatten to an empty
+    # answer.  Returning the original text keeps the reply grounded; an empty
+    # string would silently drop the only evidence there was.
+    return "\n".join(prose).strip() or content.strip()
+
+
 CONFIRM_POSITIVE_PATTERNS = {
     "yes", "yes please", "confirm", "confirmed", "please proceed",
     "proceed", "go ahead", "do it", "sure", "yep", "ok", "okay", "affirmative"
@@ -321,7 +363,17 @@ class ConversationalWorkflow:
             reply = "I don't know — no relevant retail policy documents were found."
         else:
             top = search_res.results[0]
-            reply = f"{top.content}\n\n[retail: {top.source}]"
+            # Cite the readable document title.  `Passage.source` is the file
+            # path, so citing it directly leaks `bestbuy/returns.md` at the
+            # customer.
+            citation = getattr(top, "source_title", None) or top.source
+            # `passage_to_prose` drops the section heading out of the body, so
+            # the citation carries it instead — otherwise the answer loses which
+            # part of the policy it came from.
+            section = getattr(top, "section", None)
+            if section:
+                citation = f"{citation} — {section}"
+            reply = f"{passage_to_prose(top.content)}\n\n[retail: {citation}]"
 
         self.history.append(WorkflowMessage(role="assistant", content=reply))
         return reply

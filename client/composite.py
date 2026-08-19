@@ -52,18 +52,65 @@ class RetrievalInterface(Protocol):
     def search(self, query: str, top_k: int = 5) -> dict[str, Any]: ...
 
 
-def _extract_top_source(policy_res: Any, fallback: str) -> str:
+def _first_result(policy_res: Any) -> Any:
+    """The top passage, from either shape this module is handed.
+
+    Two shapes reach here: a plain dict decoded from the MCP wire payload, and a
+    `retrieval` object when the reasoner is wired to the retrieval layer directly
+    (as the tests do).
+    """
     if isinstance(policy_res, dict):
         results = policy_res.get("results", [])
-        if results:
-            first = results[0]
-            return first.get("source") or first.get("source_path") or fallback
-    elif hasattr(policy_res, "results"):
+    else:
         results = getattr(policy_res, "results", [])
-        if results:
-            first = results[0]
-            return getattr(first, "source", None) or getattr(first, "source_path", None) or fallback
-    return fallback
+    return results[0] if results else None
+
+
+def _field(result: Any, *names: str) -> str | None:
+    """First non-empty value among `names`, dict-style or attribute-style."""
+    for name in names:
+        value = result.get(name) if isinstance(result, dict) else getattr(result, name, None)
+        if value:
+            return str(value)
+    return None
+
+
+def _extract_top_source(policy_res: Any, fallback: str) -> tuple[str, str]:
+    """Return `(citation_title, provenance_id)` for the top policy passage.
+
+    These are deliberately two values because they answer two different
+    questions, and collapsing them into one is what previously leaked
+    `bestbuy/returns.md` into a customer-facing citation:
+
+    * `citation_title` is what a human reads — `Best Buy — Return & Exchange
+      Policy`.  The two shapes disagree on where it lives: over the wire
+      contract v1 sets `source` to the title, while `retrieval.Passage` keeps
+      the title in `source_title` and uses `source` for the file path.  Title
+      fields are therefore preferred, with `source` as the last resort.
+    * `provenance_id` is what an auditor follows back to the source, so it never
+      returns a title.  The file path is preferred over `chunk_id` because chunk
+      numbering shifts on every re-ingest, which would make stored provenance
+      un-followable; `chunk_id` is the fallback for the wire shape, which does
+      not carry a path.
+
+    The two shapes overload the key `source`: internally it is the file path,
+    while on the wire it is the title.  Which one is in hand is decided by
+    whether a dedicated title field exists, not by inspecting the value.
+    """
+    first = _first_result(policy_res)
+    if first is None:
+        return fallback, fallback
+
+    explicit_title = _field(first, "source_title", "title")
+    if explicit_title:
+        # Internal shape: `source` is the path.
+        title = explicit_title
+        doc_id = _field(first, "source_path", "source", "chunk_id") or fallback
+    else:
+        # Wire shape (contract v1): `source` is already the title, no path given.
+        title = _field(first, "source") or fallback
+        doc_id = _field(first, "source_path", "chunk_id") or fallback
+    return title, doc_id
 
 
 class CompositeReasoner:
@@ -113,7 +160,7 @@ class CompositeReasoner:
         # 2. Policy retrieval
         search_query = f"{brand} return policy window days"
         policy_res = self.retrieval.search(query=search_query, top_k=3)
-        top_doc = _extract_top_source(policy_res, f"{brand}/returns.md")
+        top_doc, top_doc_id = _extract_top_source(policy_res, f"{brand}/returns.md")
 
         # Return windows per brand policy
         policy_windows = {
@@ -127,6 +174,7 @@ class CompositeReasoner:
         pol_facts = {
             "brand": brand,
             "policy_document": top_doc,
+            "policy_document_id": top_doc_id,
             "allowed_window_days": allowed_window_days,
             "policy_summary": f"Standard {brand.capitalize()} return window is {allowed_window_days} days.",
         }
@@ -150,7 +198,7 @@ class CompositeReasoner:
             ProvenanceRecord(
                 source_type="policy_knowledge_base",
                 source_tool="kb_retail_search",
-                source_id=top_doc,
+                source_id=top_doc_id,
                 extracted_facts=pol_facts,
             ),
         ]
@@ -195,10 +243,11 @@ class CompositeReasoner:
 
         # Policy lookup
         policy_res = self.retrieval.search(query="charged twice authorization hold pending release credit card", top_k=3)
-        top_doc = _extract_top_source(policy_res, "amazon/charged_twice.md")
+        top_doc, top_doc_id = _extract_top_source(policy_res, "amazon/charged_twice.md")
 
         pol_facts = {
             "policy_document": top_doc,
+            "policy_document_id": top_doc_id,
             "release_timeline": "5-7 business days",
             "policy_rule": "Authorization holds are temporary bank reservations and drop off automatically.",
         }
@@ -218,7 +267,7 @@ class CompositeReasoner:
             ProvenanceRecord(
                 source_type="policy_knowledge_base",
                 source_tool="kb_retail_search",
-                source_id=top_doc,
+                source_id=top_doc_id,
                 extracted_facts=pol_facts,
             ),
         ]
@@ -258,10 +307,11 @@ class CompositeReasoner:
         }
 
         policy_res = self.retrieval.search(query="multiple packages partial shipment delivery", top_k=3)
-        top_doc = _extract_top_source(policy_res, "amazon/delivery.md")
+        top_doc, top_doc_id = _extract_top_source(policy_res, "amazon/delivery.md")
 
         pol_facts = {
             "policy_document": top_doc,
+            "policy_document_id": top_doc_id,
             "multi_shipment_allowed": True,
             "policy_summary": "Items in a single order may ship separately from different fulfillment centers.",
         }
@@ -281,7 +331,7 @@ class CompositeReasoner:
             ProvenanceRecord(
                 source_type="policy_knowledge_base",
                 source_tool="kb_retail_search",
-                source_id=top_doc,
+                source_id=top_doc_id,
                 extracted_facts=pol_facts,
             ),
         ]
@@ -332,10 +382,11 @@ class CompositeReasoner:
         }
 
         policy_res = self.retrieval.search(query="Amazon refund timing business days processing", top_k=3)
-        top_doc = _extract_top_source(policy_res, "amazon/refund_timelines.md")
+        top_doc, top_doc_id = _extract_top_source(policy_res, "amazon/refund_timelines.md")
 
         pol_facts = {
             "policy_document": top_doc,
+            "policy_document_id": top_doc_id,
             "processing_days": "2 business days",
             "bank_reflection_days": "3-5 business days",
         }
@@ -354,7 +405,7 @@ class CompositeReasoner:
             ProvenanceRecord(
                 source_type="policy_knowledge_base",
                 source_tool="kb_retail_search",
-                source_id=top_doc,
+                source_id=top_doc_id,
                 extracted_facts=pol_facts,
             ),
         ]

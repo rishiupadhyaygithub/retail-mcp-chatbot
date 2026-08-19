@@ -28,7 +28,10 @@ def test_q15_primary_showcase_return_eligibility_and_dual_provenance():
     assert ans.operational_facts["brand"] == "amazon"
     assert ans.operational_facts["days_elapsed"] == 12
     assert ans.policy_facts["allowed_window_days"] == 30
-    assert "amazon/returns.md" in ans.policy_facts["policy_document"]
+    # The citation carries the readable document title; the followable path is
+    # kept alongside it so provenance stays auditable.
+    assert ans.policy_facts["policy_document"] == "Amazon — Return Policy"
+    assert "amazon/returns.md" in ans.policy_facts["policy_document_id"]
 
     # Verify Dual Provenance
     assert len(ans.provenance) == 2
@@ -47,7 +50,7 @@ def test_q15_primary_showcase_return_eligibility_and_dual_provenance():
     assert pol_prov.extracted_facts["allowed_window_days"] == 30
 
     # Verify formatted agent response
-    assert "[retail: amazon/returns.md]" in ans.formatted_answer
+    assert "[retail: Amazon — Return Policy]" in ans.formatted_answer
     assert "eligible" in ans.formatted_answer.lower()
     assert "18 days remaining" in ans.formatted_answer
 
@@ -78,7 +81,8 @@ def test_q14_duplicate_charge_vs_auth_hold():
     assert ans.operational_facts["captured_amount"] == 129.99
     assert ans.operational_facts["auth_hold_orders_count"] == 1
     assert ans.operational_facts["auth_hold_amount"] == 129.99
-    assert "amazon/charged_twice.md" in ans.policy_facts["policy_document"]
+    assert ans.policy_facts["policy_document"] == "Amazon — Multiple Charges for the Same Order"
+    assert "amazon/charged_twice.md" in ans.policy_facts["policy_document_id"]
 
     # Verify Dual Provenance
     assert len(ans.provenance) == 2
@@ -116,7 +120,7 @@ def test_q17_refund_processing_status_and_timelines():
     assert ans.operational_facts["is_completed"] is False
     assert "3-5 business days" in ans.policy_facts["bank_reflection_days"]
     assert "refund_processing" in ans.formatted_answer
-    assert "[retail: amazon/refund_timelines.md]" in ans.formatted_answer
+    assert "[retail: Amazon — Refund Timelines]" in ans.formatted_answer
 
 
 def test_composite_over_live_mcp_client():
