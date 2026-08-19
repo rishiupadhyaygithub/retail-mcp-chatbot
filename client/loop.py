@@ -139,6 +139,64 @@ def brand_from_records(trace: list[dict[str, Any]]) -> str:
     return ""
 
 
+# A comparative question asks how two industries differ, so answering it from
+# one server is not a partial answer — it is a comparison with nothing to
+# compare against.  Measured on Q20 ("do refund timelines differ between us and
+# the bank?"): the model searched retail only and presented retail's timeline as
+# the answer, so cross-server synthesis scored 0%.
+COMPARATIVE_MARKERS = (
+    "differ", "difference", "compare", "compared", "comparison", "versus", " vs ",
+    "same as", "than ours", "than we", "between us and", "both",
+)
+
+# Words too common to identify an industry.  Kept small: the test is whether a
+# word appears in another server's own advertised vocabulary, so ordinary
+# question words mostly fail that test anyway.
+_STOPWORDS = frozenset({
+    "does", "differ", "different", "difference", "between", "compare", "compared",
+    "comparison", "about", "with", "from", "what", "when", "which", "their",
+    "there", "this", "that", "these", "those", "have", "has", "our", "ours",
+    "us", "we", "the", "and", "for", "yet", "how", "long", "take", "than",
+    "same", "both", "versus", "policy", "policies", "customer", "please",
+})
+
+
+def is_comparative_question(question: str) -> bool:
+    low = f" {question.lower()} "
+    return any(m in low for m in COMPARATIVE_MARKERS)
+
+
+def servers_matching_question(
+    question: str, tools: list[Any], exclude: set[str]
+) -> list[str]:
+    """Servers whose own advertised vocabulary the question uses.
+
+    Matched against each server's name and tool descriptions rather than a
+    hardcoded "bank means the banking server" table, because contract v1 §9
+    makes discovery the rule: the set of peers, their names and their wording all
+    come from `servers.json` and `tools/list` at runtime.  A teammate renaming a
+    server or rewording a description keeps working; a lookup table would not.
+
+    Substring matching is deliberate so "bank" finds the `banking` server. Ranked
+    by how many distinct question words a server accounts for, so the best match
+    comes first and the caller can bound how many extra calls it makes.
+    """
+    blobs: dict[str, str] = {}
+    for tool in tools:
+        if tool.server in exclude:
+            continue
+        blobs.setdefault(tool.server, tool.server.lower())
+        blobs[tool.server] += " " + (tool.description or "").lower()
+
+    words = {
+        w for w in re.findall(r"[a-z]{4,}", question.lower()) if w not in _STOPWORDS
+    }
+    scored = [
+        (sum(1 for w in words if w in blob), server) for server, blob in blobs.items()
+    ]
+    return [server for score, server in sorted(scored, reverse=True) if score > 0]
+
+
 def search_query_argument(input_schema: dict[str, Any]) -> str:
     """The name of a search tool's free-text query parameter, from its schema.
 
@@ -244,6 +302,49 @@ def is_confirmed_by_user(question: str, history: Sequence[dict[str, Any]] | None
     return False
 
 
+async def _client_search(
+    fleet: MCPFleet,
+    result: TurnResult,
+    query_text: str,
+    round_index: int,
+    reason: str,
+    server: str | None = None,
+) -> ToolOutcome | None:
+    """Run a search the client decided on, and record it as a real tool result.
+
+    Used where leaving the decision to the model was measured to fail. Returns
+    None when no discovered tool on `server` advertises a text parameter, in
+    which case the caller must not fabricate one.
+    """
+    tool = next(
+        (
+            t
+            for t in fleet.tools
+            if (server is None or t.server == server)
+            and classify_tool_type(t.qualified_name) == "search"
+            and search_query_argument(t.input_schema)
+        ),
+        None,
+    )
+    if tool is None:
+        return None
+
+    arg_name = search_query_argument(tool.input_schema)
+    outcome = await fleet.call(tool.qualified_name, {arg_name: query_text})
+    result.trace.append(
+        {
+            "round": round_index,
+            "server": outcome.server,
+            "tool": outcome.tool_name,
+            "arguments": outcome.arguments,
+            "ok": outcome.ok,
+            "note": f"{outcome.note or ''} [client-issued: {reason}]".strip(),
+            "payload": outcome.payload,
+        }
+    )
+    return outcome
+
+
 async def run_turn(
     question: str,
     history: list[dict[str, Any]] | None = None,
@@ -271,8 +372,11 @@ async def run_turn(
 
         nudged = False
         composite_nudged = False
+        comparative_filled = False
         composite = is_composite_question(question)
+        comparative = is_comparative_question(question)
         types_called: set[str] = set()
+        servers_used: set[str] = set()
         for round_index in range(1, MAX_ROUNDS + 1):
             result.rounds = round_index
             response = await asyncio.to_thread(
@@ -321,6 +425,51 @@ async def run_turn(
                 # asserts a fact about an order nobody queried.  Ask once for the
                 # missing half, and say which half is missing rather than
                 # repeating the question.
+                # A comparative question answered from one server is not a
+                # partial comparison, it is no comparison: measured on Q20, the
+                # model searched retail only and presented retail's refund
+                # timeline as the answer to "do refund timelines differ between
+                # us and the bank?". The missing side is fetched rather than
+                # requested, for the same reason as the composite half — a step
+                # the model may skip is not a control.
+                if (
+                    comparative
+                    and not comparative_filled
+                    and round_index < MAX_ROUNDS
+                    and result.trace
+                ):
+                    wanted = [
+                        s
+                        for s in servers_matching_question(question, fleet.tools, servers_used)
+                        if s not in servers_used
+                    ]
+                    # Bounded at two so a vague question cannot fan out across
+                    # every peer and blow the spurious-call budget.
+                    if wanted:
+                        comparative_filled = True
+                        for peer in wanted[:2]:
+                            outcome = await _client_search(
+                                fleet, result, question, round_index,
+                                f"comparative question missing {peer}", server=peer,
+                            )
+                            if outcome is None:
+                                continue
+                            servers_used.add(outcome.server)
+                            types_called.add("search")
+                            messages.append(_tool_message(outcome))
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "You now have results from more than one industry. "
+                                    "Compare them explicitly: state each side's rule, "
+                                    "say whether they differ, and cite each side to the "
+                                    "server it came from."
+                                ),
+                            }
+                        )
+                        continue
+
                 missing = {"search", "records"} - types_called
                 if composite and missing == {"search"} and not composite_nudged and round_index < MAX_ROUNDS:
                     # Fetch the missing policy half directly rather than asking
@@ -334,30 +483,14 @@ async def run_turn(
                     # itself and hand them over as a real tool result.
                     composite_nudged = True
                     brand = brand_from_records(result.trace)
-                    search_tool = next(
-                        (t for t in fleet.tools
-                         if classify_tool_type(t.qualified_name) == "search"
-                         and search_query_argument(t.input_schema)),
-                        None,
+                    query_text = f"{brand} {question}".strip() if brand else question
+                    outcome = await _client_search(
+                        fleet, result, query_text, round_index,
+                        "composite half missing",
                     )
-                    if search_tool is not None:
-                        arg_name = search_query_argument(search_tool.input_schema)
-                        query_text = f"{brand} {question}".strip() if brand else question
-                        outcome = await fleet.call(
-                            search_tool.qualified_name, {arg_name: query_text}
-                        )
+                    if outcome is not None:
                         types_called.add("search")
-                        result.trace.append(
-                            {
-                                "round": round_index,
-                                "server": outcome.server,
-                                "tool": outcome.tool_name,
-                                "arguments": outcome.arguments,
-                                "ok": outcome.ok,
-                                "note": (outcome.note or "") + " [client-issued: composite half missing]",
-                                "payload": outcome.payload,
-                            }
-                        )
+                        servers_used.add(outcome.server)
                         messages.append(_tool_message(outcome))
                         messages.append(
                             {
@@ -452,6 +585,8 @@ async def run_turn(
             )
             for name, _ in prepared:
                 types_called.add(classify_tool_type(name))
+                if NAME_SEPARATOR in name:
+                    servers_used.add(name.split(NAME_SEPARATOR)[0])
 
             for outcome in outcomes:
                 result.trace.append(
