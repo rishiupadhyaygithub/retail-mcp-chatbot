@@ -139,6 +139,33 @@ def brand_from_records(trace: list[dict[str, Any]]) -> str:
     return ""
 
 
+def search_query_argument(input_schema: dict[str, Any]) -> str:
+    """The name of a search tool's free-text query parameter, from its schema.
+
+    Read from the advertised schema rather than assumed to be `query`, because
+    contract v1 §9 makes runtime discovery the rule: a teammate may call it `q`
+    or `text`. Falls back to the first required string property, then to the
+    first string property, and returns "" when nothing plausibly takes text —
+    at which point the caller must not invent an argument name.
+    """
+    properties = input_schema.get("properties") or {}
+    required = [r for r in (input_schema.get("required") or []) if r in properties]
+
+    def is_text(name: str) -> bool:
+        return (properties.get(name) or {}).get("type") in (None, "string")
+
+    for candidate in ("query", "q", "text", "search", "question"):
+        if candidate in properties and is_text(candidate):
+            return candidate
+    for name in required:
+        if is_text(name):
+            return name
+    for name in properties:
+        if is_text(name):
+            return name
+    return ""
+
+
 def classify_tool_type(qualified_name: str) -> str:
     """`search` for document retrieval, `records` for structured lookups.
 
@@ -295,6 +322,56 @@ async def run_turn(
                 # missing half, and say which half is missing rather than
                 # repeating the question.
                 missing = {"search", "records"} - types_called
+                if composite and missing == {"search"} and not composite_nudged and round_index < MAX_ROUNDS:
+                    # Fetch the missing policy half directly rather than asking
+                    # the model to do it.  Measured on Q17: asked once, the model
+                    # answered anyway and cited "[retail: Returns and Refunds
+                    # Policy]" — a document that does not exist in the corpus.
+                    # Inventing a source is the worst failure a call-centre
+                    # assistant has, and a request the model may decline is not a
+                    # control.  The client knows the question and, from the
+                    # record, the retailer, so it can retrieve the passages
+                    # itself and hand them over as a real tool result.
+                    composite_nudged = True
+                    brand = brand_from_records(result.trace)
+                    search_tool = next(
+                        (t for t in fleet.tools
+                         if classify_tool_type(t.qualified_name) == "search"
+                         and search_query_argument(t.input_schema)),
+                        None,
+                    )
+                    if search_tool is not None:
+                        arg_name = search_query_argument(search_tool.input_schema)
+                        query_text = f"{brand} {question}".strip() if brand else question
+                        outcome = await fleet.call(
+                            search_tool.qualified_name, {arg_name: query_text}
+                        )
+                        types_called.add("search")
+                        result.trace.append(
+                            {
+                                "round": round_index,
+                                "server": outcome.server,
+                                "tool": outcome.tool_name,
+                                "arguments": outcome.arguments,
+                                "ok": outcome.ok,
+                                "note": (outcome.note or "") + " [client-issued: composite half missing]",
+                                "payload": outcome.payload,
+                            }
+                        )
+                        messages.append(_tool_message(outcome))
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Those are the policy passages for this question. "
+                                    "Answer using both them and the record you already "
+                                    "have, and cite only titles that appear in these "
+                                    "results."
+                                ),
+                            }
+                        )
+                        continue
+
                 if composite and missing and not composite_nudged and round_index < MAX_ROUNDS:
                     composite_nudged = True
                     needed = (
