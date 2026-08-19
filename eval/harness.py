@@ -102,8 +102,15 @@ def load_ground_truth(path: Path, corpus: set[str]) -> list[dict[str, Any]]:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         die(EXIT_BAD_INPUT, f"{path} is not valid JSON: {exc}")
-    if not isinstance(data, dict) or data.get("schema_version") != 1:
-        die(EXIT_BAD_INPUT, f"{path}: expected an object with schema_version == 1")
+    # Accepts 1 and 2.  Schema 2 only ADDS keys (`routing_labels`,
+    # `label_meanings`, `scoring_decisions`) for the client harness; every field
+    # this harness reads is unchanged, so refusing to run against it would fail
+    # on a compatible file.  Bump this list deliberately when a schema actually
+    # changes a field this file depends on.
+    if not isinstance(data, dict) or data.get("schema_version") not in (1, 2):
+        die(EXIT_BAD_INPUT,
+            f"{path}: expected an object with schema_version in (1, 2), "
+            f"got {data.get('schema_version') if isinstance(data, dict) else type(data).__name__}")
     questions = data.get("questions")
     if not isinstance(questions, list) or not questions:
         die(EXIT_BAD_INPUT, f"{path}: 'questions' must be a non-empty list")

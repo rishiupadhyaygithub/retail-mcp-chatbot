@@ -68,8 +68,25 @@ Phrased the way an agent asks mid-call. Each records what *should* happen.
 |---|----------|-----------|----------|
 | 14 | "**I was charged twice — is that allowed and did it actually happen?**" (CUST-101 / ORD-9011) | `kb_retail_search` + `kb_retail_query_orders` | policy (`amazon/charged_twice.md`) + record: `ORD-9011` captured ($129.99) vs `ORD-9012` auth hold ($129.99 pending release) |
 | 15 | "can they return order ORD-9031 — what's the window and is it eligible?" | `kb_retail_query_orders` + `kb_retail_search` | record: `ORD-9031` placed on `2026-08-06` (12d old, brand `amazon`) + policy (`amazon/returns.md` 30d) → **Eligible** |
-| 16 | "parcel for ORD-9021 split into two — is partial delivery covered, and what shipped?" | `kb_retail_search` + `kb_retail_query_shipments` | policy (`amazon/charged_twice.md`, `amazon/delivery.md`) + records: `SHIP-402` (Blender, delivered) & `SHIP-403` (Brita Pitcher, in transit) |
+| 16 | "parcel for ORD-9021 split into two — is partial delivery covered, and what shipped?" | `kb_retail_search` + `kb_retail_query_shipments` | policy (`target/delivery.md`, `target/order_tracking.md`) + records: `SHIP-402` (Blender, delivered) & `SHIP-403` (Brita Pitcher, in transit) — **ORD-9021 is a Target order**, see the corpus-silence note below |
 | 17 | "refund on return RET-701 (order ORD-9031) — how long should it take and did it go through?" | `kb_retail_search` + `kb_retail_query_returns` | policy (`amazon/refund_timelines.md` 3-5d) + record: `RET-701` status `refund_processing` (refund pending, not yet completed) |
+
+**Q16 — corrected expectation, and a deliberate corpus silence.** This row previously
+expected `amazon/charged_twice.md` and `amazon/delivery.md`. That was wrong on two
+counts: `ORD-9021` is a **Target** order (the only split order in the dataset, so the
+question cannot move to another brand), and `charged_twice.md` is about duplicate
+**charges**, not delivery — its "Multiple shipments" section explains multiple charges,
+not delivery entitlements. Citing Amazon policy against a Target order is precisely the
+defect the client now guards against by scoping the policy search to the retailer named
+in the record.
+
+No document in this corpus states whether partial delivery is "covered" for Target.
+That silence is kept rather than papered over, because "the record is authoritative and
+the policy is silent" is a real call-centre situation and the expected behaviour is to
+report the split from the record plus Target's general shipping terms — **not** to
+import another retailer's policy to manufacture an answer. Widening the expected set to
+whichever brand happens to mention splits would score the exact bug this set exists to
+catch.
 
 Only the document half of Q14–Q17 was scored at the baseline gate; Phase 2 scores both document and structured record halves.
 

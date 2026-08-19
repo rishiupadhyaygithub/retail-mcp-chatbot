@@ -120,10 +120,11 @@
       "question": "parcel split into two — is partial delivery covered, and what shipped? (document half only)",
       "category": "Composite - document half",
       "expected_docs": [
-        "amazon/charged_twice.md",
-        "amazon/delivery.md"
+        "target/delivery.md",
+        "target/order_tracking.md"
       ],
-      "rationale": "amazon/charged_twice.md § Multiple shipments and amazon/delivery.md."
+      "rationale": "ORD-9021 is a TARGET order (the only split order in the dataset), so the brand-correct delivery documents are Target's. target/delivery.md gives standard shipping as '3-5 business days after they have shipped'; target/order_tracking.md covers per-shipment tracking, which is how an agent explains two packages. CORPUS SILENCE, recorded deliberately: no document in this corpus states whether partial delivery is 'covered' for Target. The correct answer therefore reports the split from the record and Target's general shipping terms, and does not claim a partial-delivery entitlement. Previous expectation was ['amazon/charged_twice.md','amazon/delivery.md'], wrong on two counts: wrong retailer for a Target order, and charged_twice.md is about duplicate CHARGES, not delivery - its 'Multiple shipments' section explains multiple charges. Citing Amazon policy against a Target order is exactly the defect fixed in 50e4d18.",
+      "corpus_silent_on": "whether partial delivery is contractually covered (Target)"
     },
     {
       "number": 17,
