@@ -284,6 +284,7 @@ class RetailRecords:
         *,
         customer_id: str | None = None,
         email: str | None = None,
+        name: str | None = None,
     ) -> dict[str, Any]:
         """Query customer profile and deterministic operational aggregates."""
         self._ensure_db()
@@ -291,11 +292,12 @@ class RetailRecords:
             k: v for k, v in {
                 "customer_id": customer_id,
                 "email": email,
+                "name": name,
             }.items() if v is not None
         }
 
-        if not customer_id and not email:
-            return {"results": [], "total_found": 0, "query": query_meta, "error": "Must provide customer_id or email"}
+        if not customer_id and not email and not name:
+            return {"results": [], "total_found": 0, "query": query_meta, "error": "Must provide customer_id, email, or name"}
 
         conditions: list[str] = []
         params: list[Any] = []
@@ -305,6 +307,9 @@ class RetailRecords:
         if email:
             conditions.append("c.email = ?")
             params.append(email.strip().lower())
+        if name:
+            conditions.append("LOWER(c.name) LIKE ?")
+            params.append(f"%{name.strip().lower()}%")
 
         where_clause = f"WHERE {' AND '.join(conditions)}"
         sql = f"""

@@ -84,6 +84,11 @@ def test_query_customer_deterministic_aggregates_q11_q12():
     assert aggs["open_returns_count"] == 1
     assert aggs["pending_refund_amount"] == 89.50
 
+    # Query by name
+    res_name = records.query_customer(name="Alex Rivera")
+    assert res_name["total_found"] == 1
+    assert res_name["results"][0]["customer_id"] == "CUST-101"
+
 
 def test_get_retail_schema_resource():
     schema = get_retail_schema()

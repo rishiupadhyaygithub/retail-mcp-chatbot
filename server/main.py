@@ -244,16 +244,17 @@ def create_server(
         description=(
             "Lookup customer account profile and operational summary aggregates "
             "(total orders placed, total refunded, open returns count, pending refund amount). "
-            "Use for customer-level history and account totals."
+            "Use for customer-level history, account totals, and lookup by name, customer_id, or email."
         ),
     )
     def kb_retail_query_customer(
         customer_id: str | None = None,
         email: str | None = None,
+        name: str | None = None,
     ) -> str:
         """Return customer profile and deterministic operational aggregates."""
         try:
-            res = active_records.query_customer(customer_id=customer_id, email=email)
+            res = active_records.query_customer(customer_id=customer_id, email=email, name=name)
             return _as_json(res)
         except Exception:
             LOGGER.exception("Unexpected customer query failure")
