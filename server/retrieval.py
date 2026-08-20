@@ -12,6 +12,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+# Ensure Hugging Face operates fully offline using cached local weights
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CHROMA_PATH = REPO_ROOT / "data" / "chroma"

@@ -498,9 +498,10 @@ async def run_turn(
                             {
                                 "role": "user",
                                 "content": (
-                                    "You have not searched yet. Call a search tool "
-                                    "before answering. If no tool can answer this, "
-                                    "reply with exactly: I don't know."
+                                    "You must call the appropriate MCP tool(s) (such as search, "
+                                    "query_orders, query_customer, etc.) before answering. "
+                                    "Do not output conversational plans or text preambles; "
+                                    "invoke the tool calls directly now."
                                 ),
                             }
                         )

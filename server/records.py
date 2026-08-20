@@ -417,7 +417,23 @@ class RetailRecords:
             }
 
         valid_reasons = {"damaged", "defective", "wrong_item", "unwanted", "not_as_described", "late_delivery"}
-        if reason.lower() not in valid_reasons:
+        clean_reason = reason.strip().lower().replace(" ", "_").replace("-", "_")
+        if clean_reason in valid_reasons:
+            reason = clean_reason
+        elif "damag" in clean_reason or "broken" in clean_reason:
+            reason = "damaged"
+        elif "defect" in clean_reason or "fault" in clean_reason:
+            reason = "defective"
+        elif "wrong" in clean_reason:
+            reason = "wrong_item"
+        elif "unwanted" in clean_reason or "mind" in clean_reason:
+            reason = "unwanted"
+        elif "not_as_described" in clean_reason or "different" in clean_reason:
+            reason = "not_as_described"
+        elif "late" in clean_reason or "delay" in clean_reason:
+            reason = "late_delivery"
+
+        if reason not in valid_reasons:
             return {
                 "ok": False,
                 "error": "invalid_reason",
@@ -426,7 +442,19 @@ class RetailRecords:
             }
 
         valid_conditions = {"unopened", "opened_unused", "used", "damaged"}
-        if condition.lower() not in valid_conditions:
+        clean_condition = condition.strip().lower().replace(" ", "_").replace("-", "_")
+        if clean_condition in valid_conditions:
+            condition = clean_condition
+        elif "unopened" in clean_condition or "new" in clean_condition or "sealed" in clean_condition:
+            condition = "unopened"
+        elif "opened" in clean_condition and "unused" in clean_condition:
+            condition = "opened_unused"
+        elif "damag" in clean_condition or "broken" in clean_condition:
+            condition = "damaged"
+        elif "used" in clean_condition or "open" in clean_condition:
+            condition = "used"
+
+        if condition not in valid_conditions:
             return {
                 "ok": False,
                 "error": "invalid_condition",

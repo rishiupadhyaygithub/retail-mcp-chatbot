@@ -38,6 +38,11 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# Ensure Hugging Face operates fully offline using cached local weights
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+
 # Paths resolved from this file's own location -- no hardcoded absolutes, so the
 # script works from a clean checkout wherever it lands.
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -412,7 +417,9 @@ def embed(texts: list[str]) -> list[list[float]]:
     except ImportError as exc:
         die(f"sentence-transformers is not installed ({exc}). pip install -r requirements.txt")
     print(f"[ingest] loading {MODEL_NAME} on cpu (once)", file=sys.stderr)
-    model = SentenceTransformer(MODEL_NAME, device="cpu")  # loaded ONCE, locally
+    model = SentenceTransformer(
+        MODEL_NAME, device="cpu", local_files_only=True
+    )  # loaded ONCE, locally
     print(f"[ingest] embedding {len(texts)} chunks", file=sys.stderr)
     vectors = model.encode(texts, batch_size=32, normalize_embeddings=True,
                            show_progress_bar=False)
