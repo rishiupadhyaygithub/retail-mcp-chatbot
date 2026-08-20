@@ -194,6 +194,8 @@
     border-radius: 6px;
     padding: 10px 12px;
     overflow-x: auto;
+    overflow-y: auto;
+    max-height: 360px;
     font-size: 11.5px;
     margin: 8px 0 0;
     line-height: 1.45;
@@ -310,29 +312,89 @@ function el(tag, cls, text) {
   return n;
 }
 
+function formatRecordText(r) {
+  if (!r || typeof r !== "object") return String(r || "");
+  if (r.content) return r.content.trim();
+  
+  if (r.customer_id && r.name) {
+    const spent = r.aggregates_2026?.total_spent ?? r.total_spent;
+    const orders = r.aggregates_2026?.orders_placed_count ?? r.order_count;
+    const refunds = r.aggregates_2026?.total_refunded_completed ?? r.total_refunded;
+    return `Customer: ${r.name} (${r.customer_id}) | Email: ${r.email || "n/a"} | Status: ${r.status || "active"}` +
+           (spent !== undefined ? ` | 2026 Spend: $${spent}` : "") +
+           (orders !== undefined ? ` | Orders: ${orders}` : "") +
+           (refunds !== undefined ? ` | Completed Refunds: $${refunds}` : "");
+  }
+  if (r.order_id && (r.brand || r.total_amount !== undefined)) {
+    const items = Array.isArray(r.items) ? r.items.map(i => `${i.product_name || i.sku} (x${i.quantity || 1})`).join(", ") : "";
+    return `Order: ${r.order_id} | Brand: ${r.brand || "n/a"} | Date: ${r.order_date || "n/a"} | Status: ${r.status} | Total: $${r.total_amount ?? "n/a"}` +
+           (items ? ` | Items: [${items}]` : "");
+  }
+  if (r.return_id || r.rma_code) {
+    return `Return: ${r.return_id || "n/a"} | Order: ${r.order_id || "n/a"} | Status: ${r.status} | Refund Amount: $${r.refund_amount ?? "n/a"} | Reason: ${r.reason || "n/a"}` +
+           (r.product_name ? ` | Product: ${r.product_name}` : "");
+  }
+  if (r.shipment_id || r.tracking_number) {
+    return `Shipment: ${r.shipment_id || "n/a"} | Carrier: ${r.carrier || "n/a"} | Tracking: ${r.tracking_number || "n/a"} | Status: ${r.status}`;
+  }
+  
+  const entries = Object.entries(r).filter(([k]) => !k.startsWith("_") && k !== "items");
+  return entries.map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`).join(" · ");
+}
+
 function renderSources(turn, data) {
   const passages = [];
   for (const ev of data.trace || []) {
     const p = ev.payload;
     if (p && Array.isArray(p.results)) {
-      for (const r of p.results) passages.push({ server: ev.server, r });
+      for (const r of p.results) {
+        passages.push({
+          server: ev.server,
+          title: r.source || (r.order_id ? `Order ${r.order_id}` : (r.customer_id ? `Customer ${r.name || r.customer_id}` : (r.return_id ? `Return ${r.return_id}` : "(operational record)"))),
+          section: r.section || (r.brand ? `Brand: ${r.brand}` : ""),
+          id: r.chunk_id || r.order_id || r.customer_id || r.return_id || "record",
+          score: typeof r.score === "number" ? r.score.toFixed(4) : "n/a",
+          text: formatRecordText(r),
+        });
+      }
+    } else if (p && Array.isArray(p.rows) && Array.isArray(p.columns)) {
+      for (const row of p.rows) {
+        const rowObj = {};
+        p.columns.forEach((col, idx) => {
+          if (row[idx] !== null && row[idx] !== undefined) {
+            const shortCol = col.replace(/^[a-z_]+__/, "");
+            rowObj[shortCol] = row[idx];
+          }
+        });
+        const entityTitle = rowObj.customer_name ? `Banking: ${rowObj.customer_name}` : (rowObj.account_ref ? `Account: ${rowObj.account_ref}` : "Banking Record");
+        passages.push({
+          server: ev.server,
+          title: entityTitle,
+          section: rowObj.account_type || rowObj.status || "",
+          id: rowObj.customer_ref || rowObj.account_ref || rowObj.transaction_ref || "banking_row",
+          score: "n/a",
+          text: Object.entries(rowObj).map(([k, v]) => `${k}: ${v}`).join(" · "),
+        });
+      }
     }
   }
   if (!passages.length) return;
 
   const box = el("div", "sources");
   box.appendChild(el("h3", null, `Retrieved Sources (${passages.length})`));
-  for (const { server, r } of passages) {
+  for (const item of passages) {
     const card = el("div", "src");
-    const title = r.source || r.chunk_id || "(operational record)";
-    card.appendChild(el("div", "t", r.section ? `${title} — ${r.section}` : title));
-    const score = typeof r.score === "number" ? r.score.toFixed(4) : "n/a";
-    card.appendChild(el("div", "s", `Server: ${server} · ID: ${r.chunk_id || "record"} · Score: ${score}`));
-    const text = (r.content || "").trim();
+    card.appendChild(el("div", "t", item.section ? `${item.title} — ${item.section}` : item.title));
+    card.appendChild(el("div", "s", `Server: ${item.server} · ID: ${item.id} · Score: ${item.score}`));
+    const text = (item.text || "").trim();
     card.appendChild(el("div", "x", text.length > 320 ? text.slice(0, 320) + "…" : text));
     box.appendChild(card);
   }
   turn.appendChild(box);
+}
+
+function scrollToBottom() {
+  window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
 }
 
 function renderTurn(question, data) {
@@ -401,7 +463,7 @@ function renderTurn(question, data) {
 
   turn.appendChild(aBox);
   log.appendChild(turn);
-  turn.scrollIntoView({ behavior: "smooth", block: "start" });
+  scrollToBottom();
 }
 
 form.onsubmit = async (e) => {
@@ -422,7 +484,7 @@ form.onsubmit = async (e) => {
   aBox.appendChild(el("div", "a stamp", "Agent is thinking and querying MCP tools…"));
   pending.appendChild(aBox);
   log.appendChild(pending);
-  pending.scrollIntoView({ behavior: "smooth", block: "start" });
+  scrollToBottom();
 
   try {
     const res = await fetch("/api/chat", {
