@@ -28,13 +28,16 @@ import pytest  # noqa: E402
 from client.loop import (  # noqa: E402
     brand_from_records,
     capability_summary,
+    clarification_for_write,
     classify_tool_type,
     is_composite_question,
     is_comparative_question,
     is_opener,
+    is_underspecified_write,
     is_write_tool,
     search_query_argument,
     servers_matching_question,
+    write_tool_fields,
 )
 from client.mcp_client import describe_exception  # noqa: E402
 from client.workflow import passage_to_prose  # noqa: E402
@@ -365,3 +368,113 @@ def test_capability_summary_only_advertises_discovered_tools():
     assert "telecom" not in summary
     retail_only = capability_summary([t for t in FLEET if t.server == "retail"])
     assert "banking" not in retail_only
+
+
+# ---------------------------------------------------------------------------
+# The under-specified write gate.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class FakeWriteTool:
+    """A discovered write tool, with the schema the client reads its fields from."""
+
+    server: str
+    tool_name: str
+    description: str
+    input_schema: dict
+
+    @property
+    def qualified_name(self) -> str:
+        return f"{self.server}__{self.tool_name}"
+
+
+WRITE_FLEET = [
+    FakeWriteTool(
+        server="retail",
+        tool_name="kb_retail_create_return",
+        description="Create a return request and generate an RMA code.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "order_id": {"type": "string", "description": "the order the item was bought on"},
+                "line_item_id": {"type": "string", "description": "which item on that order"},
+                "reason": {"type": "string"},
+                "condition": {"type": "string"},
+            },
+            "required": ["order_id", "line_item_id", "reason"],
+        },
+    )
+]
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "start a return for this customer",
+        "open a return for them",
+        "can you raise a case?",
+    ],
+)
+def test_write_request_without_an_order_is_underspecified(question):
+    """Measured on Q23: the grounding gate ate the clarification.
+
+    A write request naming no record has nothing to retrieve, so an answer with
+    no tool result behind it is correct here rather than ungrounded — and the
+    gate discarded it, returning "I don't know — I have no retrieved sources"
+    to a question whose only right answer is "which order?".
+    """
+    assert is_underspecified_write(question)
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        # Names the record, so the model can go ahead and the write gate applies.
+        "open a return for order ORD-9011, item ITEM-9011-1, reason damaged",
+        "open a return on order ORD-9033 for item ITEM-9033-1 reason defective",
+        # A listing, not a request to create anything (Q10).
+        "list open returns for customer CUST-103",
+        # "opened" is a condition, not an imperative (Q3).
+        "can they send back opened electronics?",
+        # Asking how a thing is done is not asking for it to be done.
+        "how do I open a return?",
+        "what's the process to open a return?",
+        # A policy question that happens to share vocabulary (Q5).
+        "they want to return after 40 days, are we allowed?",
+    ],
+)
+def test_ordinary_questions_do_not_trip_the_write_gate(question):
+    """A gate that fires on a policy question is worse than no gate.
+
+    Every case here is a question from the 28-question set or a near neighbour
+    of one; all of them must reach the normal loop.
+    """
+    assert not is_underspecified_write(question)
+
+
+def test_required_fields_come_from_the_advertised_schema():
+    """Not from a copy written down here, which is what goes stale.
+
+    Optional parameters are excluded: asking for `condition`, which the server
+    defaults, would demand something the caller does not have.
+    """
+    fields = write_tool_fields(WRITE_FLEET)
+    assert [name for name, _ in fields] == ["order_id", "line_item_id", "reason"]
+
+
+def test_no_write_tool_discovered_means_no_promise():
+    """The client must not offer to open a return no reachable server serves."""
+    assert write_tool_fields([t for t in FLEET if t.server == "retail"]) == []
+
+
+def test_clarification_names_the_fields_verbatim():
+    """The agent reads this aloud and types the answer back.
+
+    `line_item_id` is unambiguous where "the item number" is not, so the
+    parameter names are printed as the server spells them.
+    """
+    text = clarification_for_write(write_tool_fields(WRITE_FLEET))
+    assert "order_id" in text and "line_item_id" in text and "reason" in text
+    assert "which item on that order" in text  # description carried from the schema
+    assert "confirmation" in text.lower()  # the write gate still applies afterwards

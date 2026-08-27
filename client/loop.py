@@ -201,6 +201,78 @@ SUBSTANTIVE_MARKERS = POLICY_INTENT + RECORD_INTENT + (
 )
 
 
+# A request to open a return that names no order is not an ungrounded question,
+# it is an under-specified one.  Retrieval is not the missing thing — the
+# identifiers are — so searching harder cannot help and the grounding gate,
+# which discards any answer with no tool result behind it, throws away the one
+# correct reply: asking which order.  Measured on Q23 ("start a return for this
+# customer"): the gate blocked the clarification and returned "I don't know — I
+# have no retrieved sources for this", which tells the agent nothing and invites
+# them to guess the fields themselves.
+#
+# Deliberately imperative phrasings only.  "open returns" (Q10, a listing) and
+# "opened" (Q3, a condition) must not match, and neither may a question *about*
+# the process, which is a policy question and belongs in the normal loop.
+WRITE_REQUEST_MARKERS = (
+    "open a return", "start a return", "create a return", "file a return",
+    "submit a return", "process a return", "initiate a return",
+    "set up a return", "open a case", "start a case", "raise a case",
+)
+
+# Asking how a thing is done is not asking for it to be done.
+HOW_TO_MARKERS = ("how do i", "how do we", "how does", "how to", "what's the process", "what is the process")
+
+# The identifier prefixes a record actually carries, taken from RECORD_INTENT
+# rather than restated, so the two can never drift apart.
+RECORD_ID_PREFIXES = tuple(m for m in RECORD_INTENT if m.endswith("-"))
+
+
+def is_underspecified_write(question: str) -> bool:
+    """True when the user asked for a write and named no record to write against."""
+    low = question.lower()
+    if not any(m in low for m in WRITE_REQUEST_MARKERS):
+        return False
+    if any(m in low for m in HOW_TO_MARKERS) or any(m in low for m in POLICY_INTENT):
+        return False
+    return not any(p in low for p in RECORD_ID_PREFIXES)
+
+
+def write_tool_fields(tools: list[Any]) -> list[tuple[str, str]]:
+    """The discovered write tool's required parameters, name and description.
+
+    Read from the advertised schema for the same reason `search_query_argument`
+    is: the client must not carry a written-down copy of what a server requires,
+    because the copy is what goes stale.  Returns [] when no reachable server
+    advertises a write tool, in which case the caller must not promise one.
+    """
+    for tool in tools:
+        if classify_tool_type(tool.qualified_name) != "write":
+            continue
+        schema = tool.input_schema or {}
+        properties = schema.get("properties") or {}
+        required = [r for r in (schema.get("required") or []) if r in properties]
+        if required:
+            return [(name, (properties[name] or {}).get("description", "")) for name in required]
+    return []
+
+
+def clarification_for_write(fields: list[tuple[str, str]]) -> str:
+    """Ask for the exact fields the write tool requires, and invent none of them.
+
+    The field names are printed verbatim rather than paraphrased: the agent is
+    reading this to a caller and then typing it back, and "the item number" is
+    ambiguous where `line_item_id` is not.
+    """
+    lines = ["I can open that, but I need the exact details first — I won't guess them. Please give me:"]
+    for name, description in fields:
+        lines.append(f"  • {name}{f' — {description}' if description else ''}")
+    lines.append(
+        "Once I have those I'll show you exactly what I would submit and wait "
+        "for your confirmation before anything is created."
+    )
+    return "\n".join(lines)
+
+
 def is_opener(question: str) -> bool:
     """True for a greeting or a bare request for help, with nothing to look up."""
     low = question.strip().lower()
@@ -652,6 +724,19 @@ async def run_turn(
         if is_opener(question):
             result.answer = capability_summary(fleet.tools)
             return result
+
+        # Also answered before the model runs, and for the same reason: a write
+        # request with no order named has nothing to retrieve, so the grounding
+        # gate would discard the clarification as an ungrounded answer.  Asking
+        # for the fields makes no factual claim, so there is nothing here to be
+        # ungrounded about.  The fields come from the tool's own schema, so this
+        # cannot ask for a parameter the server does not require.  Skipped on a
+        # confirmation, which is the user answering this very question.
+        if is_underspecified_write(question) and not is_confirmed_by_user(question, history):
+            fields = write_tool_fields(fleet.tools)
+            if fields:
+                result.answer = clarification_for_write(fields)
+                return result
 
         nudged = False
         composite_nudged = False
