@@ -58,6 +58,12 @@ DECLINED_PATTERNS = (
     r"\bnot (?:found|available|in (?:our|the) (?:records|data|system))\b",
     r"\bno (?:such|matching) (?:order|record|customer|return)\b",
     r"\bno (?:records?|results?) (?:were )?found\b",
+    # "I couldn't find any information about order ORD-99999999" is a no-data
+    # refusal in plain English and was scored as no refusal at all, because the
+    # pattern above wants the words "not found". Kept anchored to a first-person
+    # subject, like the rest of this tuple: a passage saying an item "couldn't
+    # find its way back" is not the assistant declining.
+    r"\bi (?:could ?n'?t|did ?n'?t) find\b",
 )
 
 # DENIED_REQUEST: a substantive, grounded answer whose content is "no" — the
@@ -67,7 +73,12 @@ DECLINED_PATTERNS = (
 # Measured earlier: a correct Q15 answer containing "items cannot be returned
 # after 30 days" was miscounted as a false refusal by a bare `cannot` pattern.
 DENIED_PATTERNS = DECLINED_PATTERNS + (
-    r"\bnot eligible\b", r"\bnot allowed\b", r"\bnot permitted\b",
+    # An auxiliary is allowed between "not" and the adjective. Measured on Q5:
+    # "after these periods, returns may not be permitted" is a denial any reader
+    # would call a denial, and `\bnot permitted\b` missed it over the word "be".
+    # The bound is two words, so "not" cannot reach across a clause boundary and
+    # deny something the sentence was not talking about.
+    r"\bnot\b(?:\s+\w+){0,2}\s+(?:eligible|allowed|permitted)\b",
     r"\boutside\b.{0,25}\bwindow\b", r"\bexceeds\b.{0,25}\bwindow\b",
     r"\balready been returned\b", r"\bduplicate return\b",
     r"\bcannot be (?:returned|created|refunded)\b",
