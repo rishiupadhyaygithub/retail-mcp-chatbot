@@ -127,7 +127,12 @@ The LLM is strictly prohibited from executing state mutations without explicit u
 
 ## 5. Context Budgeting & Token Management
 
-To prevent local model context exhaustion (4096 / 8192 token limit on `qwen2.5:7b-instruct` / `qwen3:8b`):
+Originally written against a local model's 4096 / 8192-token ceiling. `topaz-coder`
+on GB10 offers 32,768, so context exhaustion is no longer the binding reason —
+but every measure below earns its place on other grounds and all three stay.
+Smaller payloads retrieve more precisely and read faster to an agent on a live
+call, and the box is shared with a production voice stack under no per-user
+quota, so sending less is a courtesy to everyone else on it:
 1. **Columnar Result Formatting:** Tool payloads use clean field projections, omitting internal SQLite rowids and intermediate flags.
 2. **Top-K Truncation:** Semantic search caps at `top_k=5` (~1200 tokens). Query tools default to `limit=10`.
 3. **Rolling Conversational Window:** The client UI maintains a sliding 10-message window, dropping stale historical turns while preserving the active session context.

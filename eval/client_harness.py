@@ -481,10 +481,12 @@ async def main_async(args: argparse.Namespace) -> int:
     if args.only:
         wanted = {int(n) for n in args.only.replace(" ", "").split(",") if n}
 
-    # Discard one warmup turn, as eval/harness.py does. Ollama unloads an idle
-    # model, so the first question otherwise absorbs the whole load cost — a
-    # measured 47.9 s against a 4 s p50 target — and the table would claim that
-    # is a warm number. eval_set.md section D requires warm and cold reported
+    # Discard one warmup turn, as eval/harness.py does. The first call after a
+    # service restart carries a one-off warm-up the platform page puts at ~8 s,
+    # so the first question otherwise absorbs it — measured at 47.9 s against a
+    # 4 s p50 target back when the model was loaded locally per request, and
+    # still 8-10 s of cold start against GB10. Either way the table would be
+    # claiming that is a warm number. eval_set.md section D requires warm and cold reported
     # separately, so cold is reported on its own line rather than averaged in.
     cold_latency = 0.0
     if not args.no_warmup:

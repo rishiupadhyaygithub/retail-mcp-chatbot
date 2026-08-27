@@ -134,7 +134,7 @@ Each layer measured separately.
 
 **Action safety (phase 3):** spurious writes 0 · fabricated fields 0 · correct action routing 100% · confirmation shown 100%
 
-**Latency:** e2e p50 ≤4s · p95 ≤10s · retrieval ≤300ms · query ≤100ms · MCP overhead ≤100ms · *(warm vs cold reported separately — Ollama unloads idle models)*
+**Latency:** e2e p50 ≤4s · p95 ≤10s · retrieval ≤300ms · query ≤100ms · MCP overhead ≤100ms · *(warm vs cold reported separately — the first call after a service restart carries a one-off warm-up, ~8s per the platform page)*
 
 **Token efficiency:** tokens/query reported → reduced ≥40% vs naive raw-JSON injection · no groundedness/recall regression
 
