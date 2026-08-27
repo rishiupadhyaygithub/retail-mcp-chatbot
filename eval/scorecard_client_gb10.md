@@ -101,3 +101,30 @@ honest about what was actually exercised.
 - **Robustness suite (9 cases)** — separate pass/fail cases, not per-question
   metrics, so they do not belong in this table.
 
+## Run-to-run spread
+
+*Added by hand, and regenerating this file will drop it.* The table above is a
+single pass over the question set, and two of its rows move between runs. Five
+consecutive runs of identical client code, same afternoon:
+
+| Row | run 1 | run 2 | run 3 | run 4 | run 5 (above) |
+|---|---|---|---|---|---|
+| p50 (warm) | 3.01 s | 3.17 s | 3.48 s | **4.35 s** | 3.04 s |
+| p95 (warm) | **10.71 s** | 8.10 s | 10.00 s | 10.00 s | 8.53 s |
+| Correct refusal | 100% | 100% | 100% | 100% | 100% |
+| False refusal | 5.3% | 5.3% | 5.3% | 5.3% | **10.5%** |
+
+Read the spread, not any single cell. Three things follow from it:
+
+- **Latency is the row that genuinely wobbles.** p50 median 3.17 s with one run
+  over target; p95 median 10.00 s, sitting exactly on the limit. GB10 is shared
+  with the INVOQ production voice stack and has no per-user quota, so this is
+  contention rather than client cost — the two questions answered entirely
+  client-side return in 0.2–1.4 s regardless of load.
+- **False refusal turns on a single question.** n=19, so one answer flipping
+  moves it 5.3 points and across the boundary. Run 5 flagged Q6, whose shipping
+  half the model sometimes declines in wording the matcher now recognises;
+  runs 1–4 did not. The row failing here is one question, not a trend.
+- **Correct refusal no longer flaps.** It was 60–80% and moving before the Q25
+  fix and the matcher correction; it is now 100% in every run.
+
