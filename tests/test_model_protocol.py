@@ -29,6 +29,7 @@ import pytest  # noqa: E402
 from client.loop import (  # noqa: E402
     CHAT_TEMPERATURE,
     _assistant_message,
+    _strip_thinking,
     _client_result_message,
     _tool_message,
     check_backend,
@@ -241,6 +242,26 @@ def test_temperature_is_pinned_below_the_api_default():
     looking like a pure transport change.
     """
     assert CHAT_TEMPERATURE < 1.0
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("<think>weighing it up</think>The window is 30 days.", "The window is 30 days."),
+        # Observed on Q28: vLLM's tool parser failed and the template token
+        # landed in `content`, so the agent's answer ended mid-thought with a
+        # bare tag on its own line.
+        (
+            "I couldn't find that order. Please verify the number.\n<tool_call>",
+            "I couldn't find that order. Please verify the number.",
+        ),
+        ("<tool_call>{\"name\": \"x\"}</tool_call>Done.", "Done."),
+        ("A plain answer with no tags.", "A plain answer with no tags."),
+    ],
+)
+def test_template_tokens_never_reach_the_agent(raw, expected):
+    """The agent reads this aloud; a stray template token reads as a malfunction."""
+    assert _strip_thinking(raw) == expected
 
 
 @pytest.mark.parametrize(

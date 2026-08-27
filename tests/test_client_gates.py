@@ -26,9 +26,12 @@ for candidate in (REPO_ROOT, REPO_ROOT / "client", REPO_ROOT / "server"):
 import pytest  # noqa: E402
 
 from client.loop import (  # noqa: E402
+    already_returned_answer,
     brand_from_records,
     capability_summary,
     clarification_for_write,
+    existing_return_for,
+    returns_lookup_tool,
     classify_tool_type,
     is_composite_question,
     is_comparative_question,
@@ -478,3 +481,95 @@ def test_clarification_names_the_fields_verbatim():
     assert "order_id" in text and "line_item_id" in text and "reason" in text
     assert "which item on that order" in text  # description carried from the schema
     assert "confirmation" in text.lower()  # the write gate still applies afterwards
+
+
+# ---------------------------------------------------------------------------
+# The pre-write duplicate check.
+# ---------------------------------------------------------------------------
+
+
+RETURNS_TOOL = FakeWriteTool(
+    server="retail",
+    tool_name="kb_retail_query_returns",
+    description="Query return records for an order or customer.",
+    input_schema={
+        "type": "object",
+        "properties": {"order_id": {"type": "string"}, "customer_id": {"type": "string"}},
+    },
+)
+
+# ORD-9033 / ITEM-9033-1, exactly as the fixture database holds it.
+EXISTING_RETURN = {
+    "results": [
+        {
+            "return_id": "RET-702",
+            "order_id": "ORD-9033",
+            "line_item_id": "ITEM-9033-1",
+            "rma_code": "RMA-IKA-702-9033",
+            "request_date": "2026-05-20",
+            "reason": "unwanted",
+            "status": "completed",
+            "product_name": "KALLAX Shelf Unit (White)",
+        }
+    ],
+    "total_found": 1,
+}
+
+
+def test_returns_lookup_tool_is_found_by_schema_not_by_name_constant():
+    """The client must not carry a written-down copy of what the server calls it."""
+    assert returns_lookup_tool([RETURNS_TOOL]) is RETURNS_TOOL
+    # A write tool also mentions returns; it is not a lookup and must not match.
+    assert returns_lookup_tool(WRITE_FLEET) is None
+
+
+def test_existing_return_blocks_a_second_one():
+    """Measured on Q25: the item already had a return and the client offered a
+    confirmation anyway.
+
+    The write was going to be rejected with `retryable: false`, so on a live
+    call that confirmation burns a turn and invites the agent to promise a
+    customer a return that cannot be raised.
+    """
+    row = existing_return_for(EXISTING_RETURN, "ITEM-9033-1")
+    assert row is not None and row["rma_code"] == "RMA-IKA-702-9033"
+
+
+def test_a_different_line_item_on_the_same_order_is_not_blocked():
+    """ORD-9033 has a second, un-returned item. Refusing it would deny a
+    customer a return they are entitled to."""
+    assert existing_return_for(EXISTING_RETURN, "ITEM-9033-2") is None
+
+
+def test_a_rejected_return_does_not_block():
+    """Mirrors the server's own predicate: `status != 'rejected'`.
+
+    Only the gating half is mirrored. The server then compares order and reason
+    to choose between an idempotent replay and a hard refusal; copying that too
+    is how a client-side mirror goes stale against the rule it mirrors.
+    """
+    rejected = {"results": [dict(EXISTING_RETURN["results"][0], status="rejected")]}
+    assert existing_return_for(rejected, "ITEM-9033-1") is None
+
+
+@pytest.mark.parametrize("payload", [None, {}, {"results": []}, {"results": [None]}, "not json"])
+def test_unreadable_payloads_fail_open(payload):
+    """A check that cannot read its answer must not refuse on a guess.
+
+    The server stays the authority, so a missed check costs a wasted round while
+    a wrong refusal denies a legitimate return.
+    """
+    assert existing_return_for(payload, "ITEM-9033-1") is None
+
+
+def test_refusal_states_the_existing_rma_and_offers_no_second_return():
+    """The RMA code is the provenance — the row quoted back.
+
+    No bracketed citation: that format names a retrieved document's `source`
+    title, and a record has none.
+    """
+    text = already_returned_answer(EXISTING_RETURN["results"][0])
+    assert "already been returned" in text
+    assert "RMA-IKA-702-9033" in text
+    assert "KALLAX Shelf Unit (White)" in text
+    assert "[" not in text

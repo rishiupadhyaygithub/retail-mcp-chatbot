@@ -273,6 +273,66 @@ def clarification_for_write(fields: list[tuple[str, str]]) -> str:
     return "\n".join(lines)
 
 
+def returns_lookup_tool(tools: list[Any]) -> Any | None:
+    """A read-only tool that lists returns for an order, taken from discovery.
+
+    Selected by advertised schema and name rather than a constant written down
+    here, for the same reason `search_query_argument` reads the parameter name
+    off the schema.  Returns None when nothing reachable advertises one, in
+    which case the caller must skip the check rather than assume it passed.
+    """
+    for tool in tools:
+        if classify_tool_type(tool.qualified_name) != "records":
+            continue
+        properties = (tool.input_schema or {}).get("properties") or {}
+        if "order_id" in properties and "return" in tool.tool_name:
+            return tool
+    return None
+
+
+def existing_return_for(payload: Any, line_item_id: str) -> dict[str, Any] | None:
+    """The return already covering this line item, if one is live.
+
+    Mirrors the *gating* half of the server's own predicate — a return on this
+    line item whose status is not `rejected` — and deliberately not the rest of
+    it.  The server goes on to compare order and reason to choose between an
+    idempotent replay and a hard `item_already_returned`; the client does not
+    need that distinction, because neither branch creates a new return and the
+    honest sentence is the same either way.  Copying the comparison too is how
+    a client-side mirror goes stale against the rule it is mirroring.
+    """
+    if not line_item_id or not isinstance(payload, dict):
+        return None
+    for row in payload.get("results") or []:
+        if not isinstance(row, dict):
+            continue
+        if row.get("line_item_id") != line_item_id:
+            continue
+        if str(row.get("status") or "").strip().lower() == "rejected":
+            continue
+        return row
+    return None
+
+
+def already_returned_answer(row: dict[str, Any]) -> str:
+    """Say what already exists, and do not offer to create a second one.
+
+    No bracketed citation: the citation format is for a retrieved document's
+    `source` title, and a record has none.  The RMA code is the provenance here
+    — it is the row itself, quoted back.
+    """
+    product = row.get("product_name") or row.get("line_item_id") or "that item"
+    identifier = row.get("rma_code") or row.get("return_id") or "an existing return"
+    status = str(row.get("status") or "").strip()
+    when = row.get("request_date")
+    return (
+        f"{product} has already been returned under {identifier}"
+        f"{f' ({status})' if status else ''}"
+        f"{f', raised {when}' if when else ''}. A second return on the same item "
+        f"is rejected, so there is nothing for me to submit."
+    )
+
+
 def is_opener(question: str) -> bool:
     """True for a greeting or a bare request for help, with nothing to look up."""
     low = question.strip().lower()
@@ -440,6 +500,11 @@ class TurnResult:
     unreachable: dict[str, str] = field(default_factory=dict)
     rounds: int = 0
     pending_write: dict[str, Any] | None = None
+    # A write the model asked for and the client declined before any human saw a
+    # confirmation, because a read-only check proved it could not succeed. Held
+    # separately from `pending_write`: nothing is pending, there is nothing to
+    # confirm, and the UI must not offer a button for it.
+    refused_write: dict[str, Any] | None = None
     grounding_blocked: bool = False
     # Which halves of a composite answer were never retrieved, if any. Empty on
     # every non-composite question and on a complete composite answer.
@@ -447,8 +512,20 @@ class TurnResult:
 
 
 def _strip_thinking(text: str) -> str:
-    """Remove a reasoning model's <think> block, which is reasoning, not an answer."""
-    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    """Remove the model's own scaffolding tokens, which are not an answer.
+
+    `<think>` is a reasoning block.  `<tool_call>` is a chat-template token that
+    reaches `content` when vLLM's tool parser fails to parse a call the model
+    emitted — observed on Q28, where the agent's answer ended with a bare
+    `<tool_call>` on its own line.  The agent reads this out loud, so a stray
+    template token is worse than noise; it reads as the assistant malfunctioning
+    mid-sentence.  Both are stripped whether or not they are closed, because an
+    unterminated open tag is exactly the failed-parse case.
+    """
+    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    cleaned = re.sub(r"<tool_call>.*?</tool_call>", "", cleaned, flags=re.DOTALL)
+    cleaned = re.sub(r"</?(?:think|tool_call|tool_response)>", "", cleaned)
+    return cleaned.strip()
 
 
 # Hiragana, katakana, CJK ideographs and hangul.  A Qwen-family model trained
@@ -679,6 +756,49 @@ async def _client_search(
         }
     )
     return outcome
+
+
+async def _existing_return_conflict(
+    fleet: MCPFleet,
+    result: TurnResult,
+    args: dict[str, Any],
+    round_index: int,
+) -> str | None:
+    """Refusal text when the item already has a return, otherwise None.
+
+    Read-only, and it fails open on purpose: no discovered returns tool, a
+    failed call, or a payload it cannot read all return None and the turn falls
+    through to the normal confirmation.  The server remains the authority — it
+    rejects a duplicate with `retryable: false` whatever this decides — so a
+    missed check costs a wasted round, while a check that refused on a guess
+    would deny a customer a return they are entitled to.
+    """
+    order_id = str(args.get("order_id") or "").strip()
+    line_item_id = str(args.get("line_item_id") or "").strip()
+    if not order_id or not line_item_id:
+        return None
+
+    tool = returns_lookup_tool(fleet.tools)
+    if tool is None:
+        return None
+
+    outcome = await fleet.call(tool.qualified_name, {"order_id": order_id})
+    result.trace.append(
+        {
+            "round": round_index,
+            "server": outcome.server,
+            "tool": outcome.tool_name,
+            "arguments": outcome.arguments,
+            "ok": outcome.ok,
+            "note": f"{outcome.note or ''} [client-issued: pre-write duplicate check]".strip(),
+            "payload": outcome.payload,
+        }
+    )
+    if not outcome.ok:
+        return None
+
+    row = existing_return_for(outcome.payload, line_item_id)
+    return already_returned_answer(row) if row else None
 
 
 async def run_turn(
@@ -927,6 +1047,24 @@ async def run_turn(
                             args = {}
 
                     if not is_confirmed_by_user(question, history):
+                        # Look before promising.  Measured on Q25: the item
+                        # already had a return, so the write was going to be
+                        # rejected with `retryable: false` — and the client
+                        # offered a confirmation anyway.  On a live call that
+                        # burns a turn and invites the agent to tell a customer
+                        # a return is being raised when it cannot be.  The check
+                        # is read-only and nothing is written either way, so this
+                        # tightens the write gate rather than loosening it: a
+                        # confirmation now only appears when the write can
+                        # actually succeed.
+                        conflict = await _existing_return_conflict(
+                            fleet, result, args, round_index
+                        )
+                        if conflict is not None:
+                            result.refused_write = {"tool": name, "arguments": args}
+                            result.answer = conflict
+                            return result
+
                         result.pending_write = {"tool": name, "arguments": args}
                         result.answer = (
                             f"This would call `{name}` with "

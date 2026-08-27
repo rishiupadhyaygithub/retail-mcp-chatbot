@@ -110,6 +110,7 @@ class Outcome:
     unreachable: dict[str, str] = field(default_factory=dict)
     grounding_blocked: bool = False
     pending_write: dict[str, Any] | None = None
+    refused_write: dict[str, Any] | None = None
     error: str = ""
     skipped: str = ""
     composite_incomplete: list[str] = field(default_factory=list)
@@ -263,18 +264,27 @@ async def run_one(question: str, number: int, label: dict[str, Any], model: str 
     out.grounding_blocked = result.grounding_blocked
     out.composite_incomplete = list(getattr(result, "composite_incomplete", []) or [])
     out.pending_write = result.pending_write
+    out.refused_write = getattr(result, "refused_write", None)
     out.call_count = len(result.trace)
     for event in result.trace:
         out.servers_called.add(event["server"])
         out.tool_types.add(classify_tool(event["tool"]))
-    if out.pending_write:
-        # A write held at the confirmation gate never executes, so it leaves no
-        # trace entry. Its routing was still correct — the client picked the
-        # right server and the right kind of tool and then stopped for a human —
-        # so it is credited from the proposed call instead of scoring as a
-        # routing miss for having made no calls.
+    # A write held at the confirmation gate never executes, so it leaves no
+    # trace entry. Its routing was still correct — the client picked the right
+    # server and the right kind of tool and then stopped for a human — so it is
+    # credited from the proposed call instead of scoring as a routing miss for
+    # having made no calls.
+    #
+    # A write *refused* before the confirmation gate, because a read-only check
+    # proved it could not succeed, is the same situation and is credited the
+    # same way. Crediting only the held one measured the gate rather than the
+    # routing: the client that correctly declined Q25 scored as though it had
+    # picked no tool at all.
+    for proposal in (out.pending_write, out.refused_write):
+        if not proposal:
+            continue
         out.tool_types.add("write")
-        proposed = str(out.pending_write.get("tool", ""))
+        proposed = str(proposal.get("tool", ""))
         if "__" in proposed:
             out.servers_called.add(proposed.split("__")[0])
     out.citations = CITATION_RE.findall(out.answer)
