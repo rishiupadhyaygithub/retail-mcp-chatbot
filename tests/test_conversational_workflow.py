@@ -177,3 +177,46 @@ def test_q26_q27_q28_honest_refusals():
     # Q28: Non-existent order
     reply_q28 = wf.handle_turn("status of order ORD-99999999?")
     assert "Order ORD-99999999 was not found" in reply_q28
+
+
+@pytest.mark.parametrize(
+    "refusal, substring",
+    [
+        ("dont do it", "do it"),
+        ("stop, do not proceed", "proceed"),
+        ("no, thats not ok", "ok"),
+        ("no it is ok, cancel that", "ok"),
+    ],
+)
+def test_a_refusal_containing_an_approving_substring_cancels(refusal, substring):
+    """Each of these created the return the user had just refused.
+
+    The confirmation branch asked `any(pattern in text)` and checked approval
+    before refusal, so the approving word buried inside the rejection won. The
+    existing cancellation test passed throughout, because "No, cancel that"
+    happens to contain no approving substring — the bug was reachable only
+    through the phrasings nobody had tried.
+    """
+    records = RetailRecords(db_path=TEST_DB_PATH)
+    wf = ConversationalWorkflow(records=records)
+
+    wf.handle_turn("open a return for order ORD-9011, item ITEM-9011-1, reason damaged")
+    assert wf.state == WorkflowState.WAITING_FOR_CONFIRMATION
+
+    assert substring in refusal  # the substring that used to win
+    reply = wf.handle_turn(refusal)
+
+    assert wf.state == WorkflowState.ACTION_CANCELLED
+    assert "cancelled" in reply.lower()
+
+    conn = get_connection(TEST_DB_PATH)
+    try:
+        item = conn.execute(
+            "SELECT status FROM line_items WHERE line_item_id = 'ITEM-9011-1'"
+        ).fetchone()
+        assert item["status"] == "delivered"
+        assert conn.execute(
+            "SELECT COUNT(*) FROM returns WHERE line_item_id = 'ITEM-9011-1'"
+        ).fetchone()[0] == 0
+    finally:
+        conn.close()

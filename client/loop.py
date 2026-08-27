@@ -28,6 +28,7 @@ from typing import Any, Sequence
 
 from openai import OpenAI
 
+from confirm import is_approval
 from mcp_client import NAME_SEPARATOR, MCPFleet, ToolOutcome, load_server_configs
 
 PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "system_prompt_v3.md"
@@ -746,16 +747,20 @@ async def _ask_model(
 
 
 def is_confirmed_by_user(question: str, history: Sequence[dict[str, Any]] | None) -> bool:
-    q = question.strip().lower()
-    confirm_words = ("yes", "confirm", "proceed", "go ahead", "approved", "execute", "sure", "ok", "okay")
-    if any(q.startswith(w) or f" {w} " in f" {q} " or q == w for w in confirm_words):
-        return True
-    if history:
-        for msg in reversed(history):
-            if msg.get("role") == "assistant" and ("confirm" in msg.get("content", "").lower() or "would call" in msg.get("content", "").lower()):
-                if any(w in q for w in confirm_words):
-                    return True
-    return False
+    """Did the user actually grant permission for the pending write?
+
+    This predicate is the only thing between a proposed write and executing it,
+    so it is `client/confirm.py` rather than a word list matched by substring.
+    The old list matched any confirm word anywhere in the message, which made
+    "is it ok to return this?" and "are we able to proceed with a policy
+    question?" both read as permission to mutate a record.
+
+    `history` is unused and kept in the signature deliberately: consent is a
+    property of what the user said, not of what came before it, and reading the
+    transcript to decide whether an ambiguous reply counts is how a maybe
+    becomes a yes.
+    """
+    return is_approval(question)
 
 
 async def _client_search(

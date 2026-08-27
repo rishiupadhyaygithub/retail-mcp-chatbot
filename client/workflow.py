@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from client.composite import CompositeReasoner
+from client.confirm import is_approval, is_refusal
 from server.records import RetailRecords, get_connection
 from server.retrieval import RetailRetrieval
 
@@ -66,15 +67,12 @@ def passage_to_prose(content: str) -> str:
     return "\n".join(prose).strip() or content.strip()
 
 
-CONFIRM_POSITIVE_PATTERNS = {
-    "yes", "yes please", "confirm", "confirmed", "please proceed",
-    "proceed", "go ahead", "do it", "sure", "yep", "ok", "okay", "affirmative"
-}
-
-CANCEL_NEGATIVE_PATTERNS = {
-    "no", "cancel", "stop", "don't", "dont", "never mind", "nevermind",
-    "no thanks", "abort", "reject", "decline"
-}
+# The word lists that used to live here are gone, not moved. They were matched
+# with `any(pattern in text)`, which made "dont do it" an approval because it
+# contains "do it". Consent now goes through `client/confirm.py`, which is
+# token-based and treats a refusal anywhere in the reply as decisive. Leaving
+# the old sets behind as constants would invite the next reader to reach for
+# them.
 
 
 class WorkflowState(str, Enum):
@@ -256,7 +254,13 @@ class ConversationalWorkflow:
         normalized = text.lower().strip().rstrip(".!?,")
         action = self.context.pending_action
 
-        if any(p in normalized for p in CONFIRM_POSITIVE_PATTERNS):
+        # `is_approval` returns False for anything carrying a refusal, so the
+        # approval branch can stay first and still be safe. It used to ask
+        # `any(pattern in text)`, so "dont do it" contained "do it", "stop, do
+        # not proceed" contained "proceed", and "no, thats not ok" contained
+        # "ok" — each executed the write the user had just declined. Those are
+        # the exact words someone types while being asked to confirm.
+        if is_approval(text):
             # User CONFIRMED -> Execute action tool
             self.state = WorkflowState.USER_CONFIRMED
             res = self.records.create_return(
@@ -282,7 +286,7 @@ class ConversationalWorkflow:
                 self.history.append(WorkflowMessage(role="assistant", content=reply))
                 return reply
 
-        elif any(p in normalized for p in CANCEL_NEGATIVE_PATTERNS):
+        elif is_refusal(text):
             # User DECLINED -> Cancel cleanly
             self.state = WorkflowState.ACTION_CANCELLED
             self.context.pending_action = None
