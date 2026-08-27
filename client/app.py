@@ -3,7 +3,7 @@
 
 Design document §6: one plain HTML/JS page served by the client, no framework
 and no build step.  That is why this is `http.server` from the standard library
-rather than FastAPI — the client's dependency list stays `ollama` + `mcp`, and a
+rather than FastAPI — the client's dependency list stays `openai` + `mcp`, and a
 colleague can run the UI straight from a clean checkout.
 
 Binds to 127.0.0.1 on purpose.  The MCP *server* binds every interface because

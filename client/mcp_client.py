@@ -43,8 +43,8 @@ from mcp.client.streamable_http import streamable_http_client
 
 CONFIG_PATH = Path(__file__).resolve().parent / "servers.json"
 
-# Ollama tool names must be a single identifier, so the server name is folded in
-# with a separator that cannot appear in an MCP tool name.
+# A tool name on the chat API must be a single identifier, so the server name is
+# folded in with a separator that cannot appear in an MCP tool name.
 NAME_SEPARATOR = "__"
 
 
@@ -287,8 +287,8 @@ class MCPFleet:
     def tools(self) -> list[DiscoveredTool]:
         return [tool for session in self._sessions.values() for tool in session.tools]
 
-    def ollama_tools(self) -> list[dict[str, Any]]:
-        """Every discovered tool, in the shape Ollama's chat API expects.
+    def tool_schemas(self) -> list[dict[str, Any]]:
+        """Every discovered tool, in the shape the OpenAI chat API expects.
 
         The server name is prefixed onto the description as well as the tool
         name so the model can honour the system prompt's "pick the tool whose
@@ -313,7 +313,11 @@ class MCPFleet:
             server, _, tool_name = qualified_name.partition(NAME_SEPARATOR)
         else:
             tool_name = qualified_name
-            matching = [s for s, session in self._sessions.items() if any(t.name == tool_name for t in session.tools)]
+            matching = [
+                s
+                for s, session in self._sessions.items()
+                if any(t.tool_name == tool_name for t in session.tools)
+            ]
             if matching:
                 server = matching[0]
             else:

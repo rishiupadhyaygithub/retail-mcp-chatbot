@@ -2,7 +2,7 @@
 """Baseline measurement harness for the retail MCP knowledge assistant. One command, one table.
 
 Reads the ground truth from eval/ground_truth.json, embeds each question LOCALLY with the same model
-the server will use (BAAI/bge-small-en-v1.5), queries the Chroma collection(s) built by ingestion, and
+the server will use (BAAI/bge-m3), queries the Chroma collection(s) built by ingestion, and
 prints a markdown scorecard to stdout (also written to --out). Progress goes to stderr. This file NEVER
 calls a chat LLM: retrieval is measured here, reasoning belongs in the client.
 
@@ -310,7 +310,7 @@ def build_token_counter(choice: str, st_model: Any) -> TokenCounter:
         except Exception as exc:  # noqa: BLE001 - reported, never swallowed
             log(f"  tokenizer: bge tokenizer unusable ({type(exc).__name__}: {exc})")
             return None
-        return TokenCounter("bge-small-en-v1.5 WordPiece (the embedder's own tokenizer)",
+        return TokenCounter(f"{EMBED_MODEL} SentencePiece (the embedder's own tokenizer)",
                             lambda s: len(tok(s, add_special_tokens=False, truncation=False)["input_ids"]))
 
     if choice == "tiktoken":

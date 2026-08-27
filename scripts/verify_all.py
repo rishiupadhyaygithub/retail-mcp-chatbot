@@ -162,9 +162,14 @@ def check_prompt_version_docs() -> None:
     record(f"the prompt loop.py loads exists ({active})", prompt_file.is_file())
 
     readme = (REPO_ROOT / "prompts" / "README.md").read_text()
-    claimed = re.findall(r"system_prompt_(v\d+)\.md`?\s*—\s*active", readme)
+    # `\**` matters: the README writes "— **active**", and without it this
+    # pattern matched nothing, `claimed` came back empty, and the check passed on
+    # the empty case — it could never fail, whatever the README said.
+    claimed = re.findall(r"system_prompt_(v\d+)\.md`?\s*—\s*\**active", readme)
+    # An empty match is now a failure, not a pass. A README that marks no prompt
+    # active is exactly the drift this check exists to catch.
     record("prompts/README names the prompt actually loaded",
-           not claimed or active in claimed,
+           bool(claimed) and active in claimed,
            f"loop.py loads {active}; README calls {claimed} active")
 
 

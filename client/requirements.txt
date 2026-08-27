@@ -10,11 +10,13 @@
 # library, so there is no web dependency to pin here.
 
 # --- Chat model client -----------------------------------------------------
-# Talks to Ollama: GB10 (`qwen3:8b`) for the demo, localhost
-# (`qwen2.5:7b-instruct`) while GB10 is unreachable. NOT `qwen3:1.7b`: it
-# emitted a tool call in 0 of 3 trials on a plain policy question, so it
-# cannot drive the tool loop at all. Point it with OLLAMA_HOST.
-ollama==0.6.2
+# Talks to the GB10 box's vLLM deployment over its OpenAI-compatible API
+# (`topaz-coder` = Qwen3-Coder-30B-A3B-Instruct-FP8). The SDK is the transport
+# only — no OpenAI service is involved and no key is required, because that
+# route carries no authentication. Point it with CHAT_BASE_URL and CHAT_MODEL;
+# the endpoint is explicitly not permanent, so the client checks /v1/models on
+# startup and refuses the turn rather than failing four rounds later.
+openai==2.41.1
 
 # --- MCP client sessions ---------------------------------------------------
 # Same pin as the server so both halves negotiate the same protocol version and

@@ -28,7 +28,7 @@ An enterprise-grade **Model Context Protocol (MCP)** server for the **Retail** i
                                                   │
                       ┌───────────────────────────▼─────────────────────────────┐
                       │             ORCHESTRATOR & LLM CHAT ENGINE              │
-                      │  - External LLM (Ollama / Qwen / Any OpenAI API)        │
+                      │  - External LLM (vLLM on GB10, OpenAI-compatible)       │
                       │  - Dual-Provenance Synthesis (client/composite.py)      │
                       │  - Conversational State Machine (client/workflow.py)    │
                       │  - Action Confirmation Safety Gates (client/loop.py)    │

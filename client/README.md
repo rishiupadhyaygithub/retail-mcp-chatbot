@@ -25,22 +25,38 @@ python3 client/loop.py --trace "Can a customer return opened electronics?"
 | `mcp_client.py` | One MCP session per server. Runtime tool discovery, timeouts, degradation. |
 | `servers.json` | Server addresses only. **No tool names** — contract v1 §9 requires discovery. |
 | `ui/index.html` | The page. Plain HTML/JS, no framework, no build step (design doc §6). |
-| `toolcall_test.py` | Original smoke test proving a local model can emit a tool call at all. |
 
 ## Chat model
 
-`CHAT_MODEL` picks the model, `OLLAMA_HOST` picks the box.
+The model runs on the GB10 box under vLLM, behind an OpenAI-compatible API.
+`CHAT_MODEL` picks the model and `CHAT_BASE_URL` picks the endpoint; both have
+defaults and neither is hardcoded anywhere downstream, because the platform
+document states plainly that these endpoints are not permanent.
 
 ```bash
-OLLAMA_HOST=http://10.10.150.150:11434 CHAT_MODEL=qwen3:8b python3 client/app.py   # demo, GB10
-OLLAMA_HOST=http://localhost:11434 python3 client/app.py                            # local default
+python3 client/app.py                                              # defaults: topaz-coder on GB10
+CHAT_BASE_URL=http://dev.topaztel.ae:15124/v1 python3 client/app.py  # explicit, same thing
 ```
 
-The local default is `qwen2.5:7b-instruct`, not the faster `qwen3:1.7b`.
-Measured here: **`qwen3:1.7b` emitted a tool call in 0 of 3 trials** on a plain
-policy question — it answers from memory instead — so it cannot drive this loop
-regardless of how fast it is. `qwen2.5:7b-instruct` is the largest model that
-still fits entirely on this 8 GB machine's GPU.
+| Variable | Default | What it does |
+|---|---|---|
+| `CHAT_MODEL` | `topaz-coder` | `Qwen3-Coder-30B-A3B-Instruct-FP8`, 32 768-token context |
+| `CHAT_BASE_URL` | `http://dev.topaztel.ae:15124/v1` | vLLM's OpenAI-compatible route |
+| `CHAT_TEMPERATURE` | `0.3` | Pinned. The API default of 1.0 is hotter than this loop was measured at |
+| `CHAT_MAX_TOKENS` | `512` | An answer read aloud on a call; also caps one turn's cost on a shared box |
+| `CHAT_TIMEOUT` | `60` | Per model call, so a hung endpoint cannot hang a turn |
+
+`/v1/models` is checked once before the first turn. If the configured model is
+not being served the turn is refused with the reason, rather than failing
+several rounds later inside an opaque API error.
+
+**Security, from the platform document and non-negotiable here:** that route has
+**no authentication and is plain HTTP**, so prompts and responses are
+unencrypted and anyone who knows host and port can use it. Keep customer PII and
+credentials out of them, and call it from this Python backend only — a base URL
+in front-end JavaScript ships to every visitor. The same box runs the INVOQ
+production voice stack and there is no per-user quota, so bulk work is throttled
+and belongs off-hours.
 
 ## The gates
 

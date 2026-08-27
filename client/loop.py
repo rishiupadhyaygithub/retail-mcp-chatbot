@@ -24,26 +24,41 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
-import ollama
+from openai import OpenAI
 
 from mcp_client import NAME_SEPARATOR, MCPFleet, ToolOutcome, load_server_configs
 
-PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "system_prompt_v2.md"
-PROMPT_VERSION = "v2"
+PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "system_prompt_v3.md"
+PROMPT_VERSION = "v3"
 
 # Design doc §5.  Five is enough for a cross-server comparison (one search per
 # server plus a synthesis round) and short enough that a loop costs seconds.
 MAX_ROUNDS = 5
 
-# `qwen3:1.7b` is the fastest model that fits this 8 GB machine, but it emitted
-# a tool call in 0 of 3 trials on a plain policy question — it answers from
-# memory instead — so it cannot drive this loop at all.  `qwen2.5:7b-instruct`
-# is the largest model that still fits entirely on the GPU here and is the same
-# proxy the design document's §4 tool-calling transcript used.  The demo model
-# stays `qwen3:8b` on GB10; override with CHAT_MODEL.
-DEFAULT_MODEL = os.environ.get("CHAT_MODEL", "qwen2.5:7b-instruct")
+# The chat model is served by vLLM on the GB10 box behind an OpenAI-compatible
+# API.  Nothing here is hardcoded past a default: the platform document is
+# explicit that the endpoint may be re-provisioned and that model names belong in
+# config, so every value below is an environment override and the base URL is
+# read on the server side only — it must never reach browser JavaScript.
+DEFAULT_MODEL = os.environ.get("CHAT_MODEL", "topaz-coder")
+CHAT_BASE_URL = os.environ.get("CHAT_BASE_URL", "http://dev.topaztel.ae:15124/v1")
+# vLLM has no auth on this route; the SDK still requires the field to be set.
+CHAT_API_KEY = os.environ.get("CHAT_API_KEY", "not-needed")
+
+# Ollama defaulted to 0.8, the OpenAI API defaults to 1.0.  Migrating without
+# pinning this would silently raise sampling temperature on the exact axis the
+# eval set measures — fabricated citations and language drift.  0.3 is the value
+# the platform document itself recommends for retrieval-grounded answering.
+CHAT_TEMPERATURE = float(os.environ.get("CHAT_TEMPERATURE", "0.3"))
+# An agent reads the answer aloud on a live call; anything past a few hundred
+# tokens is already too long to be read out, and an unbounded generation on a
+# shared box with no per-user quota is how one loop saturates it for everyone.
+CHAT_MAX_TOKENS = int(os.environ.get("CHAT_MAX_TOKENS", "512"))
+# Wall-clock ceiling per model call.  MAX_ROUNDS of these is the worst case a
+# turn can cost, so this is the number that bounds a hung endpoint.
+CHAT_TIMEOUT_SECONDS = float(os.environ.get("CHAT_TIMEOUT", "60"))
 
 # Phase 1 exposes no write tools, but the confirmation gate ships now rather
 # than being retrofitted in phase 3 next to the first tool that can actually
@@ -360,21 +375,182 @@ class TurnResult:
 
 
 def _strip_thinking(text: str) -> str:
-    """Remove qwen3's <think> block, which is reasoning, not an answer."""
+    """Remove a reasoning model's <think> block, which is reasoning, not an answer."""
     return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
 
-def _tool_message(outcome: ToolOutcome) -> dict[str, str]:
-    """What the model sees back from a tool.
+# Hiragana, katakana, CJK ideographs and hangul.  A Qwen-family model trained
+# heavily on Chinese occasionally answers an English question in Chinese; an
+# agent reading that aloud to a caller has no answer at all, so it is caught
+# here rather than being scored as a wrong answer.
+_CJK_PATTERN = re.compile(r"[぀-ヿ㐀-䶿一-鿿가-힯]")
+
+
+def has_cjk(text: str) -> bool:
+    return bool(_CJK_PATTERN.search(text or ""))
+
+
+def _assistant_message(message: Any) -> dict[str, Any]:
+    """One assistant reply, flattened to a plain replayable dict.
+
+    The OpenAI SDK returns a Pydantic model, not a mapping, so `.get()` and a
+    bare `messages.append(message)` both break against it.  Fields are copied by
+    whitelist rather than dumped wholesale: vLLM adds provider-specific keys
+    (`reasoning_content` among them) that are fine to read but are rejected when
+    handed straight back as part of the next request's message list.
+    """
+    if hasattr(message, "model_dump"):
+        dumped = message.model_dump(exclude_none=True)
+    else:
+        dumped = dict(message or {})
+
+    flat: dict[str, Any] = {
+        "role": "assistant",
+        "content": dumped.get("content") or "",
+    }
+    calls = dumped.get("tool_calls") or []
+    if calls:
+        flat["tool_calls"] = [
+            {
+                "id": call.get("id") or "",
+                "type": "function",
+                "function": {
+                    "name": call["function"]["name"],
+                    "arguments": call["function"].get("arguments") or "{}",
+                },
+            }
+            for call in calls
+        ]
+    return flat
+
+
+def _tool_message(outcome: ToolOutcome, call_id: str) -> dict[str, str]:
+    """What the model sees back from a tool it asked for.
 
     A failure is described in words rather than dropped, because the system
     prompt tells the model to answer from what it has and name what was missing.
+
+    `tool_call_id` is mandatory on this role: the API rejects the whole request
+    when a tool message does not link back to a call in the preceding assistant
+    message, so a missing id fails the turn rather than degrading it.
     """
     if outcome.ok:
         body = json.dumps(outcome.payload, ensure_ascii=False)
     else:
         body = json.dumps({"unavailable": outcome.note or "tool call failed"})
-    return {"role": "tool", "content": body, "name": outcome.tool_name}
+    return {"role": "tool", "tool_call_id": call_id, "content": body}
+
+
+def _client_result_message(outcome: ToolOutcome) -> dict[str, str]:
+    """A search the *client* decided to run, handed back as supplied context.
+
+    These results have no `tool_call_id` and can never have one — the model never
+    requested them, so no assistant `tool_calls` entry exists to link to, and a
+    `role: "tool"` message without that link is rejected outright.  Presenting
+    them as user-supplied context is the honest shape: the content is identical,
+    and the following instruction message already tells the model these are
+    retrieved passages to cite.
+    """
+    if outcome.ok:
+        body = json.dumps(outcome.payload, ensure_ascii=False)
+    else:
+        body = json.dumps({"unavailable": outcome.note or "tool call failed"})
+    return {
+        "role": "user",
+        "content": f"Results retrieved for you from `{outcome.tool_name}`:\n{body}",
+    }
+
+
+_CLIENT: OpenAI | None = None
+_BACKEND_STATUS: tuple[bool, str] | None = None
+
+
+def chat_client() -> OpenAI:
+    """The one OpenAI-protocol client, built lazily so importing costs nothing."""
+    global _CLIENT
+    if _CLIENT is None:
+        _CLIENT = OpenAI(
+            base_url=CHAT_BASE_URL,
+            api_key=CHAT_API_KEY,
+            timeout=CHAT_TIMEOUT_SECONDS,
+            max_retries=1,
+        )
+    return _CLIENT
+
+
+def check_backend(model: str, force: bool = False) -> tuple[bool, str]:
+    """Is the configured model actually being served right now?
+
+    The platform document is explicit that these endpoints are not permanent and
+    that a client should check `/v1/models` on startup and fail gracefully.  A
+    missing model otherwise surfaces four rounds later as an opaque API error
+    with a degraded banner that names the MCP servers — all of which are fine.
+
+    Cached: this is a startup check, not a per-turn one.  A shared box with no
+    per-user quota does not need an extra request on every question.
+    """
+    global _BACKEND_STATUS
+    if _BACKEND_STATUS is not None and not force:
+        return _BACKEND_STATUS
+    try:
+        served = {m.id for m in chat_client().models.list().data}
+    except Exception as exc:  # noqa: BLE001 - any failure here is the same failure
+        _BACKEND_STATUS = (False, f"{CHAT_BASE_URL} is unreachable ({exc}).")
+        return _BACKEND_STATUS
+    if model not in served:
+        _BACKEND_STATUS = (
+            False,
+            f"'{model}' is not served by {CHAT_BASE_URL} "
+            f"(available: {', '.join(sorted(served)) or 'none'}).",
+        )
+        return _BACKEND_STATUS
+    _BACKEND_STATUS = (True, "")
+    return _BACKEND_STATUS
+
+
+async def _ask_model(
+    model: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    allow_cjk: bool,
+) -> dict[str, Any]:
+    """One model call, normalised, with the language gate applied to prose.
+
+    Temperature and a token ceiling are passed explicitly on every call.  They
+    are not defaults worth inheriting: the API's own default of 1.0 is hotter
+    than what this loop was measured on, and the difference lands on exactly the
+    behaviours the eval set scores.
+    """
+    def _create(msgs: list[dict[str, Any]]):
+        return chat_client().chat.completions.create(
+            model=model,
+            messages=msgs,
+            tools=tools,
+            temperature=CHAT_TEMPERATURE,
+            max_tokens=CHAT_MAX_TOKENS,
+        )
+
+    reply = _assistant_message((await asyncio.to_thread(_create, messages)).choices[0].message)
+
+    # Only prose is gated.  A tool call carrying CJK in an argument is a
+    # retrieval query, not an answer the agent reads out.
+    if allow_cjk or reply.get("tool_calls") or not has_cjk(reply["content"]):
+        return reply
+
+    retry_messages = messages + [
+        {
+            "role": "user",
+            "content": (
+                "Your previous reply was not in English. The agent reads this "
+                "answer aloud to an English-speaking caller. Answer again in "
+                "English only, using the same tool results."
+            ),
+        }
+    ]
+    candidate = _assistant_message(
+        (await asyncio.to_thread(_create, retry_messages)).choices[0].message
+    )
+    return candidate if not has_cjk(candidate["content"]) else reply
 
 
 def is_confirmed_by_user(question: str, history: Sequence[dict[str, Any]] | None) -> bool:
@@ -445,8 +621,18 @@ async def run_turn(
 
     result = TurnResult(answer="")
 
+    # Checked before the MCP fleet is dialled: with no model there is nothing to
+    # reason with, so connecting to every server first would only add latency to
+    # a turn that cannot succeed.
+    backend_ok, backend_note = await asyncio.to_thread(check_backend, model)
+    if not backend_ok:
+        result.answer = (
+            f"The chat model is not available, so I cannot answer. {backend_note}"
+        )
+        return result
+
     async with MCPFleet(load_server_configs()) as fleet:
-        tools = fleet.ollama_tools()
+        tools = fleet.tool_schemas()
         result.tools_offered = [t["function"]["name"] for t in tools]
         result.unreachable = dict(fleet.unreachable)
 
@@ -476,10 +662,9 @@ async def run_turn(
         servers_used: set[str] = set()
         for round_index in range(1, MAX_ROUNDS + 1):
             result.rounds = round_index
-            response = await asyncio.to_thread(
-                ollama.chat, model=model, messages=messages, tools=tools
+            message = await _ask_model(
+                model, messages, tools, allow_cjk=has_cjk(question)
             )
-            message = response["message"]
             calls = message.get("tool_calls") or []
 
             if not calls:
@@ -554,7 +739,7 @@ async def run_turn(
                                 continue
                             servers_used.add(outcome.server)
                             types_called.add("search")
-                            messages.append(_tool_message(outcome))
+                            messages.append(_client_result_message(outcome))
                         messages.append(
                             {
                                 "role": "user",
@@ -589,7 +774,7 @@ async def run_turn(
                     if outcome is not None:
                         types_called.add("search")
                         servers_used.add(outcome.server)
-                        messages.append(_tool_message(outcome))
+                        messages.append(_client_result_message(outcome))
                         messages.append(
                             {
                                 "role": "user",
@@ -668,7 +853,9 @@ async def run_turn(
 
             messages.append(message)
 
-            prepared: list[tuple[str, dict[str, Any]]] = []
+            # The call id is carried alongside name and arguments because every
+            # result has to be linked back to the call that asked for it.
+            prepared: list[tuple[str, str, dict[str, Any]]] = []
             for call in calls:
                 args = call["function"]["arguments"]
                 if isinstance(args, str):
@@ -676,17 +863,17 @@ async def run_turn(
                         args = json.loads(args)
                     except json.JSONDecodeError:
                         args = {}
-                prepared.append((call["function"]["name"], args))
+                prepared.append((call.get("id") or "", call["function"]["name"], args))
 
             outcomes = await asyncio.gather(
-                *(fleet.call(name, args) for name, args in prepared)
+                *(fleet.call(name, args) for _, name, args in prepared)
             )
-            for name, _ in prepared:
+            for _, name, _args in prepared:
                 types_called.add(classify_tool_type(name))
                 if NAME_SEPARATOR in name:
                     servers_used.add(name.split(NAME_SEPARATOR)[0])
 
-            for outcome in outcomes:
+            for (call_id, _name, _args), outcome in zip(prepared, outcomes):
                 result.trace.append(
                     {
                         "round": round_index,
@@ -698,7 +885,7 @@ async def run_turn(
                         "payload": outcome.payload,
                     }
                 )
-                messages.append(_tool_message(outcome))
+                messages.append(_tool_message(outcome, call_id))
 
     result.answer = (
         f"I stopped after {MAX_ROUNDS} rounds of tool calls without reaching an "

@@ -2,7 +2,7 @@
 """Corpus ingester for the Retail Contact Center Knowledge Assistant (Intern 3).
 
 Walks data/corpus/<brand>/*.md, chunks each document, embeds every chunk locally with
-BAAI/bge-small-en-v1.5 (CPU), and writes to a persistent ChromaDB collection under
+BAAI/bge-m3 (CPU), and writes to a persistent ChromaDB collection under
 data/chroma/. Two strategies exist so the baseline scorecard picks a winner by
 measured Recall@5, not by opinion:
 
@@ -37,6 +37,7 @@ import statistics
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import NoReturn
 
 # Ensure Hugging Face operates fully offline using cached local weights
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
@@ -99,7 +100,7 @@ _BULLET_MARK = re.compile(r"^([-*+]|\d+\.)\s+")
 _QUOTE_MARK = re.compile(r"^>\s*")
 
 
-def die(message: str) -> "NoReturn":  # noqa: F821
+def die(message: str) -> NoReturn:
     """Fail loudly. Never silently default, never swallow."""
     print(f"ingest.py: error: {message}", file=sys.stderr)
     raise SystemExit(2)
