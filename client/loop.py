@@ -43,7 +43,14 @@ MAX_ROUNDS = 5
 # config, so every value below is an environment override and the base URL is
 # read on the server side only — it must never reach browser JavaScript.
 DEFAULT_MODEL = os.environ.get("CHAT_MODEL", "topaz-coder")
-CHAT_BASE_URL = os.environ.get("CHAT_BASE_URL", "http://dev.topaztel.ae:15124/v1")
+# The platform page gives two routes to the same service and labels them:
+# `10.10.150.150:18001` is "On the company network", `dev.topaztel.ae:15124` is
+# "From outside". The internal one is the default because the external gateway
+# is plain HTTP with no authentication — prompts and answers cross it in the
+# clear — so using it is a decision someone makes deliberately by setting this
+# variable, never something the client falls back to on its own. Off-network:
+#   CHAT_BASE_URL=http://dev.topaztel.ae:15124/v1 python3 client/app.py
+CHAT_BASE_URL = os.environ.get("CHAT_BASE_URL", "http://10.10.150.150:18001/v1")
 # vLLM has no auth on this route; the SDK still requires the field to be set.
 CHAT_API_KEY = os.environ.get("CHAT_API_KEY", "not-needed")
 

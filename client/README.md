@@ -33,15 +33,22 @@ The model runs on the GB10 box under vLLM, behind an OpenAI-compatible API.
 defaults and neither is hardcoded anywhere downstream, because the platform
 document states plainly that these endpoints are not permanent.
 
+The platform page gives two routes to the same service: `10.10.150.150:18001`
+"on the company network" and `dev.topaztel.ae:15124` "from outside". The
+internal one is the default. The gateway is plain HTTP with no authentication,
+so choosing it is deliberate — the client never falls back to it on its own,
+and a turn against an unreachable endpoint is refused with the reason rather
+than quietly rerouted.
+
 ```bash
-python3 client/app.py                                              # defaults: topaz-coder on GB10
-CHAT_BASE_URL=http://dev.topaztel.ae:15124/v1 python3 client/app.py  # explicit, same thing
+python3 client/app.py                                                # on-network: topaz-coder on GB10
+CHAT_BASE_URL=http://dev.topaztel.ae:15124/v1 python3 client/app.py  # off-network, over the plain-HTTP gateway
 ```
 
 | Variable | Default | What it does |
 |---|---|---|
 | `CHAT_MODEL` | `topaz-coder` | `Qwen3-Coder-30B-A3B-Instruct-FP8`, 32 768-token context |
-| `CHAT_BASE_URL` | `http://dev.topaztel.ae:15124/v1` | vLLM's OpenAI-compatible route |
+| `CHAT_BASE_URL` | `http://10.10.150.150:18001/v1` | vLLM's OpenAI-compatible route, on the company network |
 | `CHAT_TEMPERATURE` | `0.3` | Pinned. The API default of 1.0 is hotter than this loop was measured at |
 | `CHAT_MAX_TOKENS` | `512` | An answer read aloud on a call; also caps one turn's cost on a shared box |
 | `CHAT_TIMEOUT` | `60` | Per model call, so a hung endpoint cannot hang a turn |
