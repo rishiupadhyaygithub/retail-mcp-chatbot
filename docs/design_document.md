@@ -203,7 +203,7 @@ FINAL ANSWER: There are 42 units of Wireless Headphones (SKU12345) in stock, at 
 PASS: full tool-call loop worked.
 ```
 
-The script is `client/toolcall_test.py`. I ran it on a `qwen2.5:7b-instruct` instance as a stand-in and will re-run it on `qwen3:8b` once that's pulled on GB10. **[ASSUMPTION — that it stays reliable once all four servers' tools are in the list at once. I re-test after phase-1 integration.]** **[AGREE — the four of us confirm GB10 has Qwen3 8B pulled and that it handles tool-calling. If it doesn't, that's an escalation.]**
+The script was `client/toolcall_test.py`. I ran it on a `qwen2.5:7b-instruct` instance as a stand-in and will re-run it on `qwen3:8b` once that's pulled on GB10. **[SUPERSEDED 2026-08-27 — the script was an Ollama-only smoke test and was removed when the client moved to the GB10 vLLM endpoint; `tests/test_model_protocol.py` covers the same ground against the OpenAI wire protocol, and neither `qwen3:8b` nor Ollama is in the stack any more.]** **[ASSUMPTION — that it stays reliable once all four servers' tools are in the list at once. I re-test after phase-1 integration.]** **[AGREE — the four of us confirm GB10 has Qwen3 8B pulled and that it handles tool-calling. If it doesn't, that's an escalation.]**
 
 ---
 

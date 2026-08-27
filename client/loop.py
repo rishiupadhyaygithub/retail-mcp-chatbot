@@ -237,16 +237,44 @@ def is_underspecified_write(question: str) -> bool:
     return not any(p in low for p in RECORD_ID_PREFIXES)
 
 
-def write_tool_fields(tools: list[Any]) -> list[tuple[str, str]]:
-    """The discovered write tool's required parameters, name and description.
+def write_request_subject(question: str) -> str:
+    """The thing the user asked to open — "return", "case" — or "".
+
+    Taken from the marker that matched, so it is the user's own noun rather
+    than an inference about intent.
+    """
+    low = question.lower()
+    for marker in WRITE_REQUEST_MARKERS:
+        if marker in low:
+            return marker.rsplit(" ", 1)[-1]
+    return ""
+
+
+def write_tool_fields(tools: list[Any], subject: str = "") -> list[tuple[str, str]]:
+    """The required parameters of the write tool that opens `subject`.
 
     Read from the advertised schema for the same reason `search_query_argument`
     is: the client must not carry a written-down copy of what a server requires,
-    because the copy is what goes stale.  Returns [] when no reachable server
-    advertises a write tool, in which case the caller must not promise one.
+    because the copy is what goes stale.
+
+    `subject` is what makes this safe in a fleet.  Every peer advertises writes
+    of its own, and banking's `create_dispute` requires `customer_ref` and
+    `transaction_ref`; taking the first write tool discovery happens to list
+    asked the agent for a transaction reference on a retail return, measured
+    with retail down and banking up.  Matching the user's own noun against the
+    advertised tool name ties the two together without a routing guess — and
+    `servers_matching_question` is not that guess either: it exists to find
+    *peers* for a cross-server question and scores "start a return for this
+    customer" to banking.
+
+    Returns [] when nothing matches, and the caller must then promise nothing:
+    an unmatched subject means the client cannot tell which server would own
+    the write, which is precisely when it must not invent a form to fill in.
     """
     for tool in tools:
         if classify_tool_type(tool.qualified_name) != "write":
+            continue
+        if subject and subject not in tool.tool_name.lower():
             continue
         schema = tool.input_schema or {}
         properties = schema.get("properties") or {}
@@ -273,15 +301,23 @@ def clarification_for_write(fields: list[tuple[str, str]]) -> str:
     return "\n".join(lines)
 
 
-def returns_lookup_tool(tools: list[Any]) -> Any | None:
+def returns_lookup_tool(tools: list[Any], server: str | None = None) -> Any | None:
     """A read-only tool that lists returns for an order, taken from discovery.
 
     Selected by advertised schema and name rather than a constant written down
     here, for the same reason `search_query_argument` reads the parameter name
     off the schema.  Returns None when nothing reachable advertises one, in
     which case the caller must skip the check rather than assume it passed.
+
+    `server` scopes it to the server that advertised the write being checked.
+    Without that, a peer offering its own returns-shaped lookup could answer a
+    question about our order — and a lookup that finds nothing on the wrong
+    server reads identically to "no existing return", which would wave through
+    the duplicate this check exists to catch.
     """
     for tool in tools:
+        if server is not None and tool.server != server:
+            continue
         if classify_tool_type(tool.qualified_name) != "records":
             continue
         properties = (tool.input_schema or {}).get("properties") or {}
@@ -763,6 +799,7 @@ async def _existing_return_conflict(
     result: TurnResult,
     args: dict[str, Any],
     round_index: int,
+    write_tool_name: str,
 ) -> str | None:
     """Refusal text when the item already has a return, otherwise None.
 
@@ -778,7 +815,11 @@ async def _existing_return_conflict(
     if not order_id or not line_item_id:
         return None
 
-    tool = returns_lookup_tool(fleet.tools)
+    # Scoped to the server that advertised the write. A peer's returns lookup
+    # would find nothing for our order, and "nothing found" is indistinguishable
+    # from "no existing return" — which would wave through the duplicate.
+    write_server = write_tool_name.split(NAME_SEPARATOR)[0] if NAME_SEPARATOR in write_tool_name else None
+    tool = returns_lookup_tool(fleet.tools, write_server)
     if tool is None:
         return None
 
@@ -853,7 +894,10 @@ async def run_turn(
         # cannot ask for a parameter the server does not require.  Skipped on a
         # confirmation, which is the user answering this very question.
         if is_underspecified_write(question) and not is_confirmed_by_user(question, history):
-            fields = write_tool_fields(fleet.tools)
+            # Matched on the user's own noun. Every peer advertises writes of
+            # its own, and asking for banking's dispute fields on a retail
+            # return is worse than not asking at all.
+            fields = write_tool_fields(fleet.tools, write_request_subject(question))
             if fields:
                 result.answer = clarification_for_write(fields)
                 return result
@@ -1058,7 +1102,7 @@ async def run_turn(
                         # confirmation now only appears when the write can
                         # actually succeed.
                         conflict = await _existing_return_conflict(
-                            fleet, result, args, round_index
+                            fleet, result, args, round_index, name
                         )
                         if conflict is not None:
                             result.refused_write = {"tool": name, "arguments": args}

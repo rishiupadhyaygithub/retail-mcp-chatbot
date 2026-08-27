@@ -40,6 +40,7 @@ from client.loop import (  # noqa: E402
     is_write_tool,
     search_query_argument,
     servers_matching_question,
+    write_request_subject,
     write_tool_fields,
 )
 from client.mcp_client import describe_exception  # noqa: E402
@@ -469,6 +470,60 @@ def test_required_fields_come_from_the_advertised_schema():
 def test_no_write_tool_discovered_means_no_promise():
     """The client must not offer to open a return no reachable server serves."""
     assert write_tool_fields([t for t in FLEET if t.server == "retail"]) == []
+
+
+# banking advertises a write of its own, with entirely different fields.
+BANKING_WRITE = FakeWriteTool(
+    server="banking",
+    tool_name="kb_banking_create_dispute",
+    description="Raise a dispute on a transaction.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "customer_ref": {"type": "string"},
+            "transaction_ref": {"type": "string"},
+            "reason": {"type": "string"},
+        },
+        "required": ["customer_ref", "transaction_ref", "reason"],
+    },
+)
+
+
+def test_the_users_own_noun_picks_the_write_tool():
+    """Measured with both servers up: taking the first write tool discovery
+    listed was a coin flip between retail's return and banking's dispute."""
+    subject = write_request_subject("start a return for this customer")
+    assert subject == "return"
+    fields = write_tool_fields([BANKING_WRITE] + WRITE_FLEET, subject)
+    assert [name for name, _ in fields] == ["order_id", "line_item_id", "reason"]
+
+
+def test_a_peers_write_tool_is_never_offered_for_our_subject():
+    """Measured with retail down and banking up: the client asked the agent for
+    a `transaction_ref` — banking's dispute form — for a retail return.
+
+    Returning nothing is the correct answer here. The client cannot tell which
+    server would own the write, which is exactly when it must not invent a form
+    for the agent to fill in.
+    """
+    subject = write_request_subject("start a return for this customer")
+    assert write_tool_fields([BANKING_WRITE], subject) == []
+
+
+def test_an_unmatched_subject_promises_nothing():
+    """No reachable server advertises a tool that opens a "case"."""
+    subject = write_request_subject("can you raise a case?")
+    assert subject == "case"
+    assert write_tool_fields([BANKING_WRITE] + WRITE_FLEET, subject) == []
+
+
+def test_returns_lookup_is_scoped_to_the_writes_own_server():
+    """A peer's returns lookup would find nothing for our order, and "nothing
+    found" is indistinguishable from "no existing return" — which would wave
+    through the duplicate this check exists to catch."""
+    fleet = [RETURNS_TOOL, BANKING_WRITE]
+    assert returns_lookup_tool(fleet, "retail") is RETURNS_TOOL
+    assert returns_lookup_tool(fleet, "banking") is None
 
 
 def test_clarification_names_the_fields_verbatim():
